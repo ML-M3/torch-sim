@@ -2,7 +2,7 @@
 
 # /// script
 # dependencies = [
-#     "mace-torch>=0.3.11",
+#     "mace-torch>=0.3.12",
 # ]
 # ///
 
@@ -13,8 +13,8 @@ import torch
 from ase.build import bulk
 from mace.calculators.foundations_models import mace_mp
 
-from torch_sim.io import atoms_to_state
-from torch_sim.models.mace import MaceModel
+import torch_sim as ts
+from torch_sim.models.mace import MaceModel, MaceUrls
 from torch_sim.optimizers import gradient_descent
 
 
@@ -23,9 +23,8 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 dtype = torch.float32
 
 # Option 1: Load the raw model from the downloaded model
-mace_checkpoint_url = "https://github.com/ACEsuit/mace-mp/releases/download/mace_mpa_0/mace-mpa-0-medium.model"
 loaded_model = mace_mp(
-    model=mace_checkpoint_url,
+    model=MaceUrls.mace_mpa_medium,
     return_raw_model=True,
     default_dtype=dtype,
     device=device,
@@ -36,7 +35,8 @@ loaded_model = mace_mp(
 # loaded_model = torch.load(MODEL_PATH, map_location=device)
 
 # Number of steps to run
-N_steps = 10 if os.getenv("CI") else 500
+SMOKE_TEST = os.getenv("CI") is not None
+N_steps = 10 if SMOKE_TEST else 500
 
 # Set random seed for reproducibility
 rng = np.random.default_rng(seed=0)
@@ -102,7 +102,7 @@ batch_indices = torch.repeat_interleave(
 )
 """
 
-state = atoms_to_state(atoms_list, device=device, dtype=dtype)
+state = ts.io.atoms_to_state(atoms_list, device=device, dtype=dtype)
 
 print(f"Positions shape: {state.positions.shape}")
 print(f"Cell shape: {state.cell.shape}")

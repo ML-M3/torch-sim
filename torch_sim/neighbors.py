@@ -4,12 +4,8 @@ import torch
 from vesin import NeighborList as VesinNeighborList
 from vesin.torch import NeighborList as VesinNeighborList_ts
 
-from torch_sim.math import torch_divmod
-from torch_sim.transforms import (
-    build_linked_cell_neighborhood,
-    build_naive_neighborhood,
-    compute_cell_shifts,
-)
+import torch_sim.math as tsm
+from torch_sim import transforms
 
 
 @torch.jit.script
@@ -83,19 +79,18 @@ def primitive_neighbor_list(  # noqa: C901, PLR0915
     """
     # Naming conventions: Suffixes indicate the dimension of an array. The
     # following convention is used here:
-    #     c: Cartesian index, can have values 0, 1, 2
-    #     i: Global atom index, can have values 0..len(a)-1
-    #     xyz: Bin index, three values identifying x-, y- and z-component of a
-    #          spatial bin that is used to make neighbor search O(n)
-    #     b: Linearized version of the 'xyz' bin index
-    #     a: Bin-local atom index, i.e. index identifying an atom *within* a
-    #        bin
-    #     p: Pair index, can have value 0 or 1
-    #     n: (Linear) neighbor index
+    # c: Cartesian index, can have values 0, 1, 2
+    # i: Global atom index, can have values 0..len(a)-1
+    # xyz: Bin index, three values identifying x-, y- and z-component of a
+    #         spatial bin that is used to make neighbor search O(n)
+    # b: Linearized version of the 'xyz' bin index
+    # a: Bin-local atom index, i.e. index identifying an atom *within* a
+    #     bin
+    # p: Pair index, can have value 0 or 1
+    # n: (Linear) neighbor index
 
-    # Return empty neighbor list if no atoms are passed here
     if len(positions) == 0:
-        raise AssertionError("No atoms provided")
+        raise RuntimeError("No atoms provided")
 
     # Compute reciprocal lattice vectors.
     recip_cell = torch.linalg.pinv(cell).T
@@ -113,7 +108,8 @@ def primitive_neighbor_list(  # noqa: C901, PLR0915
             1 / l3 if l3 > 0 else pytorch_scalar_1,
         ]
     )
-    assert face_dist_c.shape == (3,)
+    if face_dist_c.shape != (3,):
+        raise ValueError(f"face_dist_c.shape={face_dist_c.shape} != (3,)")
 
     # we don't handle other fancier cutoffs
     max_cutoff: torch.Tensor = cutoff
@@ -174,7 +170,7 @@ def primitive_neighbor_list(  # noqa: C901, PLR0915
     for c in range(3):
         if pbc[c]:
             # (Note: torch.divmod does not exist in older numpy versions)
-            cell_shift_ic[:, c], bin_index_ic[:, c] = torch_divmod(
+            cell_shift_ic[:, c], bin_index_ic[:, c] = tsm.torch_divmod(
                 bin_index_ic[:, c], n_bins_c[c]
             )
         else:
@@ -218,8 +214,10 @@ def primitive_neighbor_list(  # noqa: C901, PLR0915
         bin_index_i = bin_index_i[mask]
 
     # Make sure that all atoms have been sorted into bins.
-    assert len(atom_i) == 0
-    assert len(bin_index_i) == 0
+    if len(atom_i) != 0:
+        raise ValueError(f"len(atom_i)={len(atom_i)} != 0")
+    if len(bin_index_i) != 0:
+        raise ValueError(f"len(bin_index_i)={len(bin_index_i)} != 0")
 
     # Now we construct neighbor pairs by pairing up all atoms within a bin or
     # between bin and neighboring bin. atom_pairs_pn is a helper buffer that
@@ -264,9 +262,9 @@ def primitive_neighbor_list(  # noqa: C901, PLR0915
         for dy in range(-int(neigh_search_y.item()), int(neigh_search_y.item()) + 1):
             for dx in range(-int(neigh_search_x.item()), int(neigh_search_x.item()) + 1):
                 # Bin index of neighboring bin and shift vector.
-                shiftx_xyz, neighbinx_xyz = torch_divmod(binx_xyz + dx, n_bins_c[0])
-                shifty_xyz, neighbiny_xyz = torch_divmod(biny_xyz + dy, n_bins_c[1])
-                shiftz_xyz, neighbinz_xyz = torch_divmod(binz_xyz + dz, n_bins_c[2])
+                shiftx_xyz, neighbinx_xyz = tsm.torch_divmod(binx_xyz + dx, n_bins_c[0])
+                shifty_xyz, neighbiny_xyz = tsm.torch_divmod(biny_xyz + dy, n_bins_c[1])
+                shiftz_xyz, neighbinz_xyz = tsm.torch_divmod(binz_xyz + dz, n_bins_c[2])
                 neighbin_b = (
                     neighbinx_xyz
                     + n_bins_c[0] * (neighbiny_xyz + n_bins_c[1] * neighbinz_xyz)
@@ -691,7 +689,7 @@ def strict_nl(
     References:
         - https://github.com/felixmusil/torch_nl
     """
-    cell_shifts = compute_cell_shifts(cell, shifts_idx, batch_mapping)
+    cell_shifts = transforms.compute_cell_shifts(cell, shifts_idx, batch_mapping)
     if cell_shifts is None:
         d2 = (positions[mapping[0]] - positions[mapping[1]]).square().sum(dim=1)
     else:
@@ -738,7 +736,7 @@ def torch_nl_n2(
             Default is False.
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
             mapping (torch.Tensor [2, n_neighbors]):
                 A tensor containing the indices of the neighbor list for the given
                 positions array. `mapping[0]` corresponds to the central atom indices,
@@ -753,7 +751,7 @@ def torch_nl_n2(
         - https://github.com/felixmusil/torch_nl
     """
     n_atoms = torch.bincount(batch)
-    mapping, batch_mapping, shifts_idx = build_naive_neighborhood(
+    mapping, batch_mapping, shifts_idx = transforms.build_naive_neighborhood(
         positions, cell, pbc, cutoff, n_atoms, self_interaction
     )
     mapping, mapping_batch, shifts_idx = strict_nl(
@@ -793,7 +791,7 @@ def torch_nl_linked_cell(
             Default is False.
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
             A tuple containing:
                 - mapping (torch.Tensor [2, n_neighbors]):
                     A tensor containing the indices of the neighbor list for the given
@@ -809,7 +807,7 @@ def torch_nl_linked_cell(
         - https://github.com/felixmusil/torch_nl
     """
     n_atoms = torch.bincount(batch)
-    mapping, batch_mapping, shifts_idx = build_linked_cell_neighborhood(
+    mapping, batch_mapping, shifts_idx = transforms.build_linked_cell_neighborhood(
         positions, cell, pbc, cutoff, n_atoms, self_interaction
     )
 

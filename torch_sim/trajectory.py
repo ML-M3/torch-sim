@@ -32,7 +32,7 @@ import inspect
 import pathlib
 from collections.abc import Callable
 from functools import partial
-from typing import Any, Literal, Self
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 import numpy as np
 import tables
@@ -40,6 +40,10 @@ import torch
 
 from torch_sim.state import SimState
 
+
+if TYPE_CHECKING:
+    from ase import Atoms
+    from ase.io.trajectory import Trajectory
 
 _DATA_TYPE_MAP = {
     np.dtype("float32"): tables.Float32Atom(),
@@ -104,8 +108,8 @@ class TrajectoryReporter:
                 trajectories but `TrajectoryReporter.report` can still
                 be used to compute properties directly.
             state_frequency (int): How often to save state (in steps)
-            prop_calculators (dict[int, dict[str, Callable]], optional): Dictionary
-                mapping frequencies to property calculators where each calculator is a
+            prop_calculators (dict[int, dict[str, Callable]], optional): Map of
+                frequencies to property calculators where each calculator is a
                 function that takes a state and optionally a model and returns a tensor.
                 Defaults to None.
             state_kwargs (dict, optional): Additional arguments for state writing.
@@ -171,12 +175,7 @@ class TrajectoryReporter:
 
     @property
     def array_registry(self) -> dict[str, tuple[tuple[int, ...], np.dtype]]:
-        """Get the registry of array shapes and dtypes.
-
-        Returns:
-            dict[str, tuple[tuple[int, ...], np.dtype]]: Dictionary mapping array names to
-                tuples of (shape, dtype)
-        """
+        """Registry of array shapes and dtypes."""
         # Return the registry from the first trajectory
         if self.trajectories:
             return self.trajectories[0].array_registry
@@ -441,7 +440,7 @@ class TorchSimTrajectory:
             coerce_to_int32 (bool): Whether to coerce int64 data to int32
 
         Returns:
-            dict: Dictionary mapping numpy/torch dtypes to PyTables atom types
+            dict: Map of numpy/torch dtypes to PyTables atom types
         """
         type_map = copy.copy(_DATA_TYPE_MAP)
         if coerce_to_int32:
@@ -468,8 +467,8 @@ class TorchSimTrajectory:
         file and that the steps are monotonically increasing.
 
         Args:
-            data (dict[str, np.ndarray | torch.Tensor]): Dictionary mapping array
-                names to numpy arrays or torch tensors with shapes [n_frames, ...]
+            data (dict[str, np.ndarray | torch.Tensor]): Map of array names to numpy
+                arrays or torch tensors with shapes [n_frames, ...]
             steps (int | list[int]): Step number(s) for the frame(s) being written.
                 If steps is an integer, arrays will be treated as single frame data.
 
@@ -781,7 +780,7 @@ class TorchSimTrajectory:
             frame (int): Frame index to retrieve (-1 for last frame)
 
         Returns:
-            dict[str, torch.Tensor]: Dictionary of tensor names to their values
+            dict[str, torch.Tensor]: Map of tensor names to their values
 
         Raises:
             ValueError: If required arrays are missing from trajectory or frame is
@@ -803,7 +802,7 @@ class TorchSimTrajectory:
             frame = n_frames + frame
 
         if frame > n_frames:
-            raise ValueError(f"{frame=} is out of range. Total frames: {n_frames}")
+            raise ValueError(f"{frame=} is out of range. Total frames: {n_frames:,}")
 
         arrays["positions"] = self.get_array("positions", start=frame, stop=frame + 1)[0]
 
@@ -853,7 +852,7 @@ class TorchSimTrajectory:
             validate_proximity=False,
         )
 
-    def get_atoms(self, frame: int = -1) -> Any:
+    def get_atoms(self, frame: int = -1) -> "Atoms":
         """Get an ASE Atoms object for a given frame.
 
         Converts the state at the specified frame to an ASE Atoms object
@@ -868,7 +867,12 @@ class TorchSimTrajectory:
         Raises:
             ImportError: If ASE is not installed
         """
-        from ase import Atoms
+        try:
+            from ase import Atoms
+        except ImportError:
+            raise ImportError(
+                "ASE is required to convert to ASE Atoms. Run `pip install ase`"
+            ) from None
 
         arrays = self._get_state_arrays(frame)
 
@@ -918,11 +922,7 @@ class TorchSimTrajectory:
 
     @property
     def metadata(self) -> dict:
-        """Get the metadata for the trajectory.
-
-        Returns:
-            dict: Metadata for the trajectory
-        """
+        """Metadata for the trajectory."""
         attrs = self._file.root.metadata._v_attrs
         return {name: getattr(attrs, name) for name in attrs._f_list()}
 
@@ -968,7 +968,7 @@ class TorchSimTrajectory:
         """
         return self._file.root.data.positions.shape[0]
 
-    def write_ase_trajectory(self, filename: str | pathlib.Path) -> Any:
+    def write_ase_trajectory(self, filename: str | pathlib.Path) -> "Trajectory":
         """Convert trajectory to ASE Trajectory format.
 
         Writes the entire trajectory to a new file in ASE format for compatibility

@@ -44,20 +44,90 @@ Example::
 
 import torch
 
+import torch_sim as ts
+from torch_sim import transforms
 from torch_sim.models.interface import ModelInterface
 from torch_sim.neighbors import vesin_nl_ts
-from torch_sim.state import SimState, StateDict
-from torch_sim.transforms import get_pair_displacements
-from torch_sim.unbatched.models.soft_sphere import (
-    soft_sphere_pair,
-    soft_sphere_pair_force,
-)
+from torch_sim.typing import StateDict
 
 
-# Default parameter values defined at module level
 DEFAULT_SIGMA = torch.tensor(1.0)
 DEFAULT_EPSILON = torch.tensor(1.0)
 DEFAULT_ALPHA = torch.tensor(2.0)
+
+
+def soft_sphere_pair(
+    dr: torch.Tensor,
+    sigma: torch.Tensor = DEFAULT_SIGMA,
+    epsilon: torch.Tensor = DEFAULT_EPSILON,
+    alpha: torch.Tensor = DEFAULT_ALPHA,
+) -> torch.Tensor:
+    """Calculate pairwise repulsive energies between soft spheres with finite-range
+    interactions.
+
+    Computes a soft-core repulsive potential between particle pairs based on
+    their separation distance, size, and interaction parameters. The potential
+    goes to zero at finite range.
+
+    Args:
+        dr: Pairwise distances between particles. Shape: [n, m].
+        sigma: Particle diameters. Either a scalar float or tensor of shape [n, m]
+            for particle-specific sizes.
+        epsilon: Energy scale of the interaction. Either a scalar float or tensor
+            of shape [n, m] for pair-specific interaction strengths.
+        alpha: Stiffness exponent controlling the interaction decay. Either a scalar
+            float or tensor of shape [n, m].
+
+    Returns:
+        torch.Tensor: Pairwise interaction energies between particles. Shape: [n, m].
+            Each element [i,j] represents the repulsive energy between particles i and j.
+    """
+
+    def fn(dr: torch.Tensor) -> torch.Tensor:
+        return epsilon / alpha * (1.0 - (dr / sigma)).pow(alpha)
+
+    # Create mask for distances within cutoff i.e sigma
+    mask = dr < sigma
+
+    # Use transforms.safe_mask to compute energies only where mask is True
+    return transforms.safe_mask(mask, fn, dr)
+
+
+def soft_sphere_pair_force(
+    dr: torch.Tensor,
+    sigma: torch.Tensor = DEFAULT_SIGMA,
+    epsilon: torch.Tensor = DEFAULT_EPSILON,
+    alpha: torch.Tensor = DEFAULT_ALPHA,
+) -> torch.Tensor:
+    """Computes the pairwise repulsive forces between soft spheres with finite range.
+
+    This function implements a soft-core repulsive interaction that smoothly goes to zero
+    at the cutoff distance sigma. The force magnitude is controlled by epsilon and its
+    stiffness by alpha.
+
+    Args:
+        dr: A tensor of shape [n, m] containing pairwise distances between particles,
+            where n and m represent different particle indices.
+        sigma: Particle diameter defining the interaction cutoff distance. Can be either
+            a float scalar or a tensor of shape [n, m] for particle-specific diameters.
+        epsilon: Energy scale of the interaction. Can be either a float scalar or a
+            tensor of shape [n, m] for particle-specific interaction strengths.
+        alpha: Exponent controlling the stiffness of the repulsion. Higher values create
+            a harder repulsion. Can be either a float scalar or a tensor of shape [n, m].
+
+    Returns:
+        torch.Tensor: Forces between particle pairs with shape [n, m]. Forces are zero
+            for distances greater than sigma.
+    """
+
+    def fn(dr: torch.Tensor) -> torch.Tensor:
+        return (-epsilon / sigma) * (1.0 - (dr / sigma)).pow(alpha - 1)
+
+    # Create mask for distances within cutoff i.e sigma
+    mask = dr < sigma
+
+    # Use transforms.safe_mask to compute energies only where mask is True
+    return transforms.safe_mask(mask, fn, dr)
 
 
 class SoftSphereModel(torch.nn.Module, ModelInterface):
@@ -100,7 +170,7 @@ class SoftSphereModel(torch.nn.Module, ModelInterface):
 
         # Get forces for a system with periodic boundary conditions
         results = colloid_model(
-            SimState(
+            ts.SimState(
                 positions=positions,
                 cell=box_vectors,
                 pbc=torch.tensor([True, True, True]),
@@ -182,7 +252,7 @@ class SoftSphereModel(torch.nn.Module, ModelInterface):
 
     def unbatched_forward(
         self,
-        state: SimState,
+        state: ts.SimState,
     ) -> dict[str, torch.Tensor]:
         """Compute energies and forces for a single unbatched system.
 
@@ -195,7 +265,7 @@ class SoftSphereModel(torch.nn.Module, ModelInterface):
                 positions, cell vectors, and other system information.
 
         Returns:
-            dict[str, torch.Tensor]: Dictionary of computed properties:
+            dict[str, torch.Tensor]: Computed properties:
                 - "energy": Total potential energy (scalar)
                 - "forces": Atomic forces with shape [n_atoms, 3] (if
                     compute_forces=True)
@@ -211,7 +281,7 @@ class SoftSphereModel(torch.nn.Module, ModelInterface):
             the cutoff distance.
         """
         if isinstance(state, dict):
-            state = SimState(**state, masses=torch.ones_like(state["positions"]))
+            state = ts.SimState(**state, masses=torch.ones_like(state["positions"]))
 
         positions = state.positions
         cell = state.row_vector_cell
@@ -228,7 +298,7 @@ class SoftSphereModel(torch.nn.Module, ModelInterface):
                 sort_id=False,
             )
             # Get displacements between neighbor pairs
-            dr_vec, distances = get_pair_displacements(
+            dr_vec, distances = transforms.get_pair_displacements(
                 positions=positions,
                 cell=cell,
                 pbc=pbc,
@@ -238,7 +308,7 @@ class SoftSphereModel(torch.nn.Module, ModelInterface):
 
         else:
             # Direct N^2 computation of all pairs
-            dr_vec, distances = get_pair_displacements(
+            dr_vec, distances = transforms.get_pair_displacements(
                 positions=positions,
                 cell=cell,
                 pbc=pbc,
@@ -307,7 +377,7 @@ class SoftSphereModel(torch.nn.Module, ModelInterface):
 
         return results
 
-    def forward(self, state: SimState | StateDict) -> dict[str, torch.Tensor]:
+    def forward(self, state: ts.SimState | StateDict) -> dict[str, torch.Tensor]:
         """Compute soft sphere potential energies, forces, and stresses for a system.
 
         Main entry point for soft sphere potential calculations that handles batched
@@ -320,7 +390,7 @@ class SoftSphereModel(torch.nn.Module, ModelInterface):
                 or a dictionary with the same keys.
 
         Returns:
-            dict[str, torch.Tensor]: Dictionary of computed properties:
+            dict[str, torch.Tensor]: Computed properties:
                 - "energy": Potential energy with shape [n_batches]
                 - "forces": Atomic forces with shape [n_atoms, 3]
                     (if compute_forces=True)
@@ -342,7 +412,7 @@ class SoftSphereModel(torch.nn.Module, ModelInterface):
             ```
         """
         if isinstance(state, dict):
-            state = SimState(**state, masses=torch.ones_like(state["positions"]))
+            state = ts.SimState(**state, masses=torch.ones_like(state["positions"]))
 
         # Handle batch indices if not provided
         if state.batch is None and state.cell.shape[0] > 1:
@@ -572,9 +642,10 @@ class SoftSphereMultiModel(torch.nn.Module):
         )
 
         # Ensure parameter matrices are symmetric (required for energy conservation)
-        assert torch.allclose(self.sigma_matrix, self.sigma_matrix.T)
-        assert torch.allclose(self.epsilon_matrix, self.epsilon_matrix.T)
-        assert torch.allclose(self.alpha_matrix, self.alpha_matrix.T)
+        for matrix_name in ("sigma_matrix", "epsilon_matrix", "alpha_matrix"):
+            matrix = getattr(self, matrix_name)
+            if not torch.allclose(matrix, matrix.T):
+                raise ValueError(f"{matrix_name} is not symmetric")
 
         # Set interaction cutoff distance
         self.cutoff = torch.tensor(
@@ -583,7 +654,7 @@ class SoftSphereMultiModel(torch.nn.Module):
 
     def unbatched_forward(  # noqa: PLR0915
         self,
-        state: SimState,
+        state: ts.SimState,
         species: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         """Compute energies and forces for a single unbatched system with multiple
@@ -601,7 +672,7 @@ class SoftSphereMultiModel(torch.nn.Module):
                 uses the species defined at initialization. Defaults to None.
 
         Returns:
-            dict[str, torch.Tensor]: Dictionary of computed properties:
+            dict[str, torch.Tensor]: Computed properties:
                 - "energy": Total potential energy (scalar)
                 - "forces": Atomic forces with shape [n_atoms, 3]
                     (if compute_forces=True)
@@ -619,8 +690,8 @@ class SoftSphereMultiModel(torch.nn.Module):
             of the two particles.
         """
         # Convert inputs to proper device/dtype and handle species
-        if not isinstance(state, SimState):
-            state = SimState(**state)
+        if not isinstance(state, ts.SimState):
+            state = ts.SimState(**state)
 
         if species is not None:
             species = species.to(device=self.device, dtype=torch.long)
@@ -643,7 +714,7 @@ class SoftSphereMultiModel(torch.nn.Module):
                 sorti=False,
             )
             # Get displacements between neighbor pairs
-            dr_vec, distances = get_pair_displacements(
+            dr_vec, distances = transforms.get_pair_displacements(
                 positions=positions,
                 cell=cell,
                 pbc=self.pbc,
@@ -653,7 +724,7 @@ class SoftSphereMultiModel(torch.nn.Module):
 
         else:
             # Direct N^2 computation of all pairs
-            dr_vec, distances = get_pair_displacements(
+            dr_vec, distances = transforms.get_pair_displacements(
                 positions=positions,
                 cell=cell,
                 pbc=self.pbc,
@@ -731,7 +802,7 @@ class SoftSphereMultiModel(torch.nn.Module):
 
         return results
 
-    def forward(self, state: SimState | StateDict) -> dict[str, torch.Tensor]:
+    def forward(self, state: ts.SimState | StateDict) -> dict[str, torch.Tensor]:
         """Compute soft sphere potential properties for multi-component systems.
 
         Main entry point for multi-species soft sphere calculations that handles
@@ -744,7 +815,7 @@ class SoftSphereMultiModel(torch.nn.Module):
                 or a dictionary with the same keys.
 
         Returns:
-            dict[str, torch.Tensor]: Dictionary of computed properties:
+            dict[str, torch.Tensor]: Computed properties:
                 - "energy": Potential energy with shape [n_batches]
                 - "forces": Atomic forces with shape [n_atoms, 3]
                     (if compute_forces=True)
@@ -776,8 +847,8 @@ class SoftSphereMultiModel(torch.nn.Module):
             This method requires species information either provided during initialization
             or included in the state object's metadata.
         """
-        if not isinstance(state, SimState):
-            state = SimState(
+        if not isinstance(state, ts.SimState):
+            state = ts.SimState(
                 **state, pbc=self.pbc, masses=torch.ones_like(state["positions"])
             )
         elif state.pbc != self.pbc:

@@ -37,10 +37,30 @@ def get_fractional_coordinates(
         >>> cell = torch.tensor([[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]])
         >>> frac = get_fractional_coordinates(pos, cell)
         >>> print(frac)
-        tensor([[0.2500, 0.2500, 0.2500],
-                [0.5000, 0.0000, 0.0000]])
+        tensor([[0.25, 0.25, 0.25],
+                [0.50, 0.00, 0.00]])
     """
-    return torch.linalg.solve(cell.T, positions.T).T
+    if cell.ndim == 3:  # Handle batched cell tensors
+        # For batched cells, we need to determine if this is:
+        # 1. A single batch (n_batches=1) - can be squeezed and handled normally
+        # 2. Multiple batches - need proper batch handling
+
+        if cell.shape[0] == 1:
+            # Single batch case - squeeze and use the 2D implementation
+            cell_2d = cell.squeeze(0)  # Remove batch dimension
+            return torch.linalg.solve(cell_2d.mT, positions.mT).mT
+        # Multiple batches case - this would require batch indices to know which
+        # atoms belong to which batch. For now, this is not implemented.
+        raise NotImplementedError(
+            f"Multiple batched cell tensors with shape {cell.shape} are not yet "
+            "supported in get_fractional_coordinates. For multiple batch systems, "
+            "you need to provide batch indices to determine which atoms belong to "
+            "which batch. For single batch systems, consider squeezing the batch "
+            "dimension or using individual calls per batch."
+        )
+
+    # Original case for 2D cell matrix
+    return torch.linalg.solve(cell.mT, positions.mT).mT
 
 
 def inverse_box(box: torch.Tensor) -> torch.Tensor:
@@ -80,8 +100,8 @@ def inverse_box(box: torch.Tensor) -> torch.Tensor:
         >>> # Matrix inverse
         >>> mat = torch.tensor([[1.0, 2.0], [0.0, 1.0]])
         >>> inverse_box(mat)
-        tensor([[ 1.0000, -2.0000],
-                [ 0.0000,  1.0000]])
+        tensor([[ 1, -2],
+                [ 0,  1]])
     """
     if (torch.is_tensor(box) and box.ndim == 0) or box.numel() == 1 or box.ndim == 1:
         return 1 / box
@@ -99,14 +119,14 @@ def pbc_wrap_general(
     This implementation follows the general matrix-based approach for
     periodic boundary conditions in arbitrary triclinic cells:
     1. Transform positions to fractional coordinates using B = A^(-1)
-    2. Wrap fractional coordinates to [0,1) using f - floor(f)
+    2. Wrap fractional coordinates to [0,1) using modulo
     3. Transform back to real space using A
 
     Args:
         positions (torch.Tensor): Tensor of shape (..., d)
             containing particle positions in real space.
-        lattice_vectors (torch.Tensor): Tensor of shape (d, d)
-            containing lattice vectors as columns (A matrix in the equations).
+        lattice_vectors (torch.Tensor): Tensor of shape (d, d) containing
+            lattice vectors as columns (A matrix in the equations).
 
     Returns:
         torch.Tensor: Tensor of wrapped positions in real space with
@@ -124,23 +144,13 @@ def pbc_wrap_general(
     if positions.shape[-1] != lattice_vectors.shape[0]:
         raise ValueError("Position dimensionality must match lattice vectors.")
 
-    # Compute B = A^(-1) to transform to fractional coordinates
-    B = torch.linalg.inv(lattice_vectors)
-
     # Transform to fractional coordinates: f = Br
-    frac_coords = positions @ B.T
+    frac_coords = positions @ torch.linalg.inv(lattice_vectors).T
 
-    # Wrap to reference cell [0,1) using f - floor(f)
-    wrapped_frac = frac_coords - torch.floor(frac_coords)
+    # Wrap to reference cell [0,1) using modulo
+    wrapped_frac = frac_coords % 1.0
 
-    # Handle edge case of positions exactly on upper boundary
-    wrapped_frac = torch.where(
-        torch.isclose(wrapped_frac, torch.ones_like(wrapped_frac)),
-        torch.zeros_like(wrapped_frac),
-        wrapped_frac,
-    )
-
-    # Transform back to real space: t = Ag
+    # Transform back to real space: r_row_wrapped = wrapped_f_row @ M_row
     return wrapped_frac @ lattice_vectors.T
 
 
@@ -157,7 +167,7 @@ def pbc_wrap_batched(
         positions (torch.Tensor): Tensor of shape (n_atoms, 3) containing
             particle positions in real space.
         cell (torch.Tensor): Tensor of shape (n_batches, 3, 3) containing
-            lattice vectors for each batch.
+            lattice vectors as column vectors.
         batch (torch.Tensor): Tensor of shape (n_atoms,) containing batch
             indices for each atom.
 
@@ -191,15 +201,8 @@ def pbc_wrap_batched(
     # For each atom, multiply its position by its batch's inverse cell matrix
     frac_coords = torch.bmm(B_per_atom, positions.unsqueeze(2)).squeeze(2)
 
-    # Wrap to reference cell [0,1) using f - floor(f)
-    wrapped_frac = frac_coords - torch.floor(frac_coords)
-
-    # Handle edge case of positions exactly on upper boundary
-    wrapped_frac = torch.where(
-        torch.isclose(wrapped_frac, torch.ones_like(wrapped_frac)),
-        torch.zeros_like(wrapped_frac),
-        wrapped_frac,
-    )
+    # Wrap to reference cell [0,1) using modulo
+    wrapped_frac = frac_coords % 1.0
 
     # Transform back to real space: r = A·f
     # Get the cell for each atom based on its batch index
@@ -258,7 +261,7 @@ def get_pair_displacements(
         shifts (Optional[torch.Tensor]): Shift vectors for periodic images [n_pairs, 3].
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor]:
+        tuple[torch.Tensor, torch.Tensor]:
             - Displacement vectors [n_pairs, 3].
             - Distances [n_pairs].
     """
@@ -518,8 +521,10 @@ def compute_distances_with_cell_shifts(
         torch.Tensor: A tensor of shape (n_pairs,) containing the
             computed distances for each pair.
     """
-    assert mapping.dim() == 2
-    assert mapping.shape[0] == 2
+    if mapping.dim() != 2:
+        raise ValueError(f"Mapping must be a 2D tensor, got {mapping.shape}")
+    if mapping.shape[0] != 2:
+        raise ValueError(f"Mapping must have 2 rows, got {mapping.shape[0]}")
 
     if cell_shifts is None:
         dr = pos[mapping[1]] - pos[mapping[0]]
@@ -580,7 +585,7 @@ def get_fully_connected_mapping(
             self-interactions in the mapping.
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor]: A tuple containing:
+        tuple[torch.Tensor, torch.Tensor]: A tuple containing:
             - mapping (torch.Tensor): A tensor of shape (n_pairs, 2)
                 representing the pairs of indices for which distances
                 will be computed.
@@ -637,7 +642,7 @@ def build_naive_neighborhood(
             self-interactions.
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
+        tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
             - mapping (torch.Tensor): A tensor of shape (n_pairs, 2)
                 representing the pairs of indices for neighboring atoms.
             - batch_mapping (torch.Tensor): A tensor of shape (n_pairs,)
@@ -823,7 +828,7 @@ def linked_cell(  # noqa: PLR0915
             atoms will be included as their own neighbors. Default is False.
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor]:
+        tuple[torch.Tensor, torch.Tensor]:
             - neigh_atom (torch.Tensor): A tensor containing pairs of indices
               where neigh_atom[0] represents the original atom indices
               and neigh_atom[1] represents their corresponding neighbor
@@ -989,7 +994,7 @@ def build_linked_cell_neighborhood(
             their own neighbors. Default is False.
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
             - mapping (torch.Tensor): A tensor containing pairs of indices where
               mapping[0] represents the central atom indices and mapping[1]
               represents their corresponding neighbor indices.
@@ -1067,7 +1072,7 @@ def multiplicative_isotropic_cutoff(
 
     References:
         HOOMD-blue documentation:
-        https://hoomd-blue.readthedocs.io/en/stable/module-md-pair.html#hoomd.md.pair.pair
+        https://hoomd-blue.readthedocs.io/en/latest/hoomd/md/module-pair.html
     """
     r_c = r_cutoff**2
     r_o = r_onset**2
@@ -1157,7 +1162,7 @@ def safe_mask(
         >>> x = torch.tensor([1.0, 2.0, -1.0])
         >>> mask = torch.tensor([True, True, False])
         >>> safe_mask(mask, torch.log, x)
-        tensor([0.0000, 0.6931, 0.0000])
+        tensor([0, 0.6931, 0])
     """
     masked = torch.where(mask, operand, torch.zeros_like(operand))
     return torch.where(mask, fn(masked), torch.full_like(operand, placeholder))

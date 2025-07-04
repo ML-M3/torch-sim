@@ -3,7 +3,7 @@
 #   <summary>Dependencies</summary>
 # /// script
 # dependencies = [
-#     "mace-torch>=0.3.11",
+#     "mace-torch>=0.3.12",
 # ]
 # ///
 # </details>
@@ -65,12 +65,11 @@ Then we can initialize the MaceModel class with the raw model.
 
 # %%
 from mace.calculators.foundations_models import mace_mp
-from torch_sim.models import MaceModel
+from torch_sim.models.mace import MaceModel, MaceUrls
 
 # load mace_mp using the mace package
-mace_checkpoint_url = "https://github.com/ACEsuit/mace-mp/releases/download/mace_mpa_0/mace-mpa-0-medium.model"
 loaded_model = mace_mp(
-    model=mace_checkpoint_url,
+    model=MaceUrls.mace_mpa_medium,
     return_raw_model=True,
     default_dtype=dtype,
     device=device,
@@ -115,7 +114,7 @@ Note that the energy here refers to the potential energy of the system.
 
 # %%
 model_outputs = model(state)
-print(f"Model outputs: {', '.join(list(model_outputs.keys()))}")
+print(f"Model outputs: {', '.join(list(model_outputs))}")
 
 print(f"Energy is a batchwise property with shape: {model_outputs['energy'].shape}")
 print(f"Forces are an atomwise property with shape: {model_outputs['forces'].shape}")

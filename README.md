@@ -14,7 +14,7 @@ era. By rewriting the core primitives of atomistic simulation in Pytorch, it all
 orders of magnitude acceleration of popular machine learning potentials.
 
 * Automatic batching and GPU memory management allowing significant simulation speedup
-* Support for MACE, Fairchem, SevenNet, ORB, MatterSim, graph-pes, and metatensor MLIP models
+* Support for MACE, Fairchem, SevenNet, ORB, MatterSim, graph-pes, and metatomic MLIP models
 * Support for classical lennard jones, morse, and soft-sphere potentials
 * Molecular dynamics integration schemes like NVE, NVT Langevin, and NPT Langevin
 * Relaxation of atomic positions and cell with gradient descent and FIRE
@@ -42,7 +42,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # easily load the model from mace-mp
 from mace.calculators.foundations_models import mace_mp
-from torch_sim.models import MaceModel
+from torch_sim.models.mace import MaceModel
 mace = mace_mp(model="small", return_raw_model=True)
 mace_model = MaceModel(model=mace, device=device)
 
@@ -58,7 +58,7 @@ final_state = ts.integrate(
     n_steps=50,
     timestep=0.002,
     temperature=1000,
-    integrator=ts.nvt_langevin,
+    integrator=ts.integrators.nvt_langevin,
     trajectory_reporter=dict(filenames=trajectory_files, state_frequency=10),
 )
 final_atoms_list = final_state.to_atoms()
@@ -123,7 +123,9 @@ To understand how TorchSim works, start with the [comprehensive tutorials](https
 
 ## Core Modules
 
-TorchSim's structure is summarized in the [API reference](https://radical-ai.github.io/torch-sim/reference/index.html) documentation.
+TorchSim's package structure is summarized in the [API reference](https://radical-ai.github.io/torch-sim/reference/index.html) documentation and drawn as a treemap below.
+
+![TorchSim package treemap](https://github.com/user-attachments/assets/1ccb3a15-233d-4bc0-b11c-35a676a2bcf3)
 
 ## License
 

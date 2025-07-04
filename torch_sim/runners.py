@@ -9,14 +9,23 @@ import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import chain
+from typing import Any
 
 import torch
+from tqdm import tqdm
 
 from torch_sim.autobatching import BinningAutoBatcher, InFlightAutoBatcher
 from torch_sim.models.interface import ModelInterface
+from torch_sim.optimizers import (
+    FireState,
+    FrechetCellFIREState,
+    UnitCellFireState,
+    UnitCellGDState,
+)
 from torch_sim.quantities import batchwise_max_force, calc_kinetic_energy, calc_kT
-from torch_sim.state import SimState, StateLike, concatenate_states, initialize_state
+from torch_sim.state import SimState, concatenate_states, initialize_state
 from torch_sim.trajectory import TrajectoryReporter
+from torch_sim.typing import StateLike
 from torch_sim.units import UnitSystem
 
 
@@ -77,6 +86,7 @@ def _configure_batches_iterator(
         autobatcher = BinningAutoBatcher(
             model=model,
             return_indices=True,
+            max_memory_padding=0.9,
         )
         autobatcher.load_states(state)
         batches = autobatcher
@@ -87,7 +97,7 @@ def _configure_batches_iterator(
     elif autobatcher is False:
         batches = [(state, [])]
     else:
-        raise ValueError(
+        raise TypeError(
             f"Invalid autobatcher type: {type(autobatcher).__name__}, "
             "must be bool or BinningAutoBatcher."
         )
@@ -104,6 +114,7 @@ def integrate(
     timestep: float,
     trajectory_reporter: TrajectoryReporter | dict | None = None,
     autobatcher: BinningAutoBatcher | bool = False,
+    pbar: bool | dict[str, Any] = False,
     **integrator_kwargs: dict,
 ) -> SimState:
     """Simulate a system using a model and integrator.
@@ -121,6 +132,9 @@ def integrate(
             tracking trajectory. If a dict, will be passed to the TrajectoryReporter
             constructor.
         autobatcher (BinningAutoBatcher | bool): Optional autobatcher to use
+        pbar (bool | dict[str, Any], optional): Show a progress bar.
+            Only works with an autobatcher in interactive shell. If a dict is given,
+            it's passed to `tqdm` as kwargs.
         **integrator_kwargs: Additional keyword arguments for integrator init function
 
     Returns:
@@ -130,9 +144,7 @@ def integrate(
     # create a list of temperatures
     temps = temperature if hasattr(temperature, "__iter__") else [temperature] * n_steps
     if len(temps) != n_steps:
-        raise ValueError(
-            f"len(temperature) = {len(temps)}. It must equal n_steps = {n_steps}"
-        )
+        raise ValueError(f"{len(temps)=:,}. It must equal n_steps = {n_steps=:,}")
 
     # initialize the state
     state: SimState = initialize_state(system, model.device, model.dtype)
@@ -154,6 +166,14 @@ def integrate(
 
     final_states: list[SimState] = []
     og_filenames = trajectory_reporter.filenames if trajectory_reporter else None
+
+    tqdm_pbar = None
+    if pbar and autobatcher:
+        pbar_kwargs = pbar if isinstance(pbar, dict) else {}
+        pbar_kwargs.setdefault("desc", "Integrate")
+        pbar_kwargs.setdefault("disable", None)
+        tqdm_pbar = tqdm(total=state.n_batches, **pbar_kwargs)
+
     for state, batch_indices in batch_iterator:
         state = init_fn(state)
 
@@ -173,6 +193,8 @@ def integrate(
 
         # finish the trajectory reporter
         final_states.append(state)
+        if tqdm_pbar:
+            tqdm_pbar.update(state.n_batches)
 
     if trajectory_reporter:
         trajectory_reporter.finish()
@@ -206,7 +228,7 @@ def _configure_in_flight_autobatcher(
     if isinstance(autobatcher, InFlightAutoBatcher):
         autobatcher.return_indices = True
         autobatcher.max_attempts = max_attempts
-    else:
+    elif isinstance(autobatcher, bool):
         if autobatcher:
             memory_scales_with = model.memory_scales_with
             max_memory_scaler = None
@@ -219,7 +241,12 @@ def _configure_in_flight_autobatcher(
             max_memory_scaler=max_memory_scaler,
             memory_scales_with=memory_scales_with,
             max_iterations=max_attempts,
+            max_memory_padding=0.9,
         )
+    else:
+        autobatcher_type = type(autobatcher).__name__
+        cls_name = InFlightAutoBatcher.__name__
+        raise TypeError(f"Invalid {autobatcher_type=}, must be bool or {cls_name}.")
     return autobatcher
 
 
@@ -257,12 +284,16 @@ def _chunked_apply(
     return concatenate_states(ordered_states)
 
 
-def generate_force_convergence_fn(force_tol: float = 1e-1) -> Callable:
+def generate_force_convergence_fn(
+    force_tol: float = 1e-1, *, include_cell_forces: bool = True
+) -> Callable:
     """Generate a force-based convergence function for the convergence_fn argument
     of the optimize function.
 
     Args:
         force_tol (float): Force tolerance for convergence
+        include_cell_forces (bool): Whether to include the `cell_forces` in
+            the convergence check. Defaults to True.
 
     Returns:
         Convergence function that takes a state and last energy and
@@ -272,9 +303,23 @@ def generate_force_convergence_fn(force_tol: float = 1e-1) -> Callable:
     def convergence_fn(
         state: SimState,
         last_energy: torch.Tensor | None = None,  # noqa: ARG001
-    ) -> bool:
-        """Check if the system has converged."""
-        return batchwise_max_force(state) < force_tol
+    ) -> torch.Tensor:
+        """Check if the system has converged.
+
+        Returns:
+            torch.Tensor: Boolean tensor of shape (n_batches,) indicating
+                convergence status for each batch.
+        """
+        force_conv = batchwise_max_force(state) < force_tol
+
+        if include_cell_forces:
+            if (cell_forces := getattr(state, "cell_forces", None)) is None:
+                raise ValueError("cell_forces not found in state")
+            cell_forces_norm, _ = cell_forces.norm(dim=2).max(dim=1)
+            cell_force_conv = cell_forces_norm < force_tol
+            return force_conv & cell_force_conv
+
+        return force_conv
 
     return convergence_fn
 
@@ -294,14 +339,19 @@ def generate_energy_convergence_fn(energy_tol: float = 1e-3) -> Callable:
     def convergence_fn(
         state: SimState,
         last_energy: torch.Tensor | None = None,
-    ) -> bool:
-        """Check if the system has converged."""
+    ) -> torch.Tensor:
+        """Check if the system has converged.
+
+        Returns:
+            torch.Tensor: Boolean tensor of shape (n_batches,) indicating
+                convergence status for each batch.
+        """
         return torch.abs(state.energy - last_energy) < energy_tol
 
     return convergence_fn
 
 
-def optimize(
+def optimize(  # noqa: C901
     system: StateLike,
     model: ModelInterface,
     *,
@@ -311,6 +361,7 @@ def optimize(
     autobatcher: InFlightAutoBatcher | bool = False,
     max_steps: int = 10_000,
     steps_between_swaps: int = 5,
+    pbar: bool | dict[str, Any] = False,
     **optimizer_kwargs: dict,
 ) -> SimState:
     """Optimize a system using a model and optimizer.
@@ -336,6 +387,9 @@ def optimize(
         max_steps (int): Maximum number of total optimization steps
         steps_between_swaps: Number of steps to take before checking convergence
             and swapping out states.
+        pbar (bool | dict[str, Any], optional): Show a progress bar.
+            Only works with an autobatcher in interactive shell. If a dict is given,
+            it's passed to `tqdm` as kwargs.
 
     Returns:
         Optimized system state
@@ -353,13 +407,17 @@ def optimize(
     autobatcher = _configure_in_flight_autobatcher(
         model, state, autobatcher, max_attempts
     )
-    state = _chunked_apply(
-        init_fn,
-        state,
-        model,
-        max_memory_scaler=autobatcher.max_memory_scaler,
-        memory_scales_with=autobatcher.memory_scales_with,
-    )
+
+    if not isinstance(
+        state, (FireState, UnitCellFireState, UnitCellGDState, FrechetCellFIREState)
+    ):
+        state = _chunked_apply(
+            init_fn,
+            state,
+            model,
+            max_memory_scaler=autobatcher.max_memory_scaler,
+            memory_scales_with=autobatcher.memory_scales_with,
+        )
     autobatcher.load_states(state)
     trajectory_reporter = _configure_reporter(
         trajectory_reporter,
@@ -370,6 +428,14 @@ def optimize(
     last_energy = None
     all_converged_states, convergence_tensor = [], None
     og_filenames = trajectory_reporter.filenames if trajectory_reporter else None
+
+    tqdm_pbar = None
+    if pbar and autobatcher:
+        pbar_kwargs = pbar if isinstance(pbar, dict) else {}
+        pbar_kwargs.setdefault("desc", "Optimize")
+        pbar_kwargs.setdefault("disable", None)
+        tqdm_pbar = tqdm(total=state.n_batches, **pbar_kwargs)
+
     while (result := autobatcher.next_batch(state, convergence_tensor))[0] is not None:
         state, converged_states, batch_indices = result
         all_converged_states.extend(converged_states)
@@ -394,6 +460,9 @@ def optimize(
                 break
 
         convergence_tensor = convergence_fn(state, last_energy)
+        if tqdm_pbar:
+            # assume convergence_tensor shape is correct
+            tqdm_pbar.update(torch.count_nonzero(convergence_tensor).item())
 
     all_converged_states.extend(result[1])
 
@@ -413,6 +482,7 @@ def static(
     *,
     trajectory_reporter: TrajectoryReporter | dict | None = None,
     autobatcher: BinningAutoBatcher | bool = False,
+    pbar: bool | dict[str, Any] = False,
 ) -> list[dict[str, torch.Tensor]]:
     """Run single point calculations on a batch of systems.
 
@@ -435,6 +505,9 @@ def static(
             `state_kwargs` argument.
         autobatcher (BinningAutoBatcher | bool): Optional autobatcher to use for
             batching calculations
+        pbar (bool | dict[str, Any], optional): Show a progress bar.
+            Only works with an autobatcher in interactive shell. If a dict is given,
+            it's passed to `tqdm` as kwargs.
 
     Returns:
         list[dict[str, torch.Tensor]]: Maps of property names to tensors for all batches
@@ -464,10 +537,17 @@ def static(
         forces: torch.Tensor | None
         stress: torch.Tensor | None
 
-    final_states: list[SimState] = []
     all_props: list[dict[str, torch.Tensor]] = []
     og_filenames = trajectory_reporter.filenames
-    for substate, batch_indices in batch_iterator:
+
+    tqdm_pbar = None
+    if pbar and autobatcher:
+        pbar_kwargs = pbar if isinstance(pbar, dict) else {}
+        pbar_kwargs.setdefault("desc", "Static")
+        pbar_kwargs.setdefault("disable", None)
+        tqdm_pbar = tqdm(total=state.n_batches, **pbar_kwargs)
+
+    for sub_state, batch_indices in batch_iterator:
         # set up trajectory reporters
         if autobatcher and trajectory_reporter and og_filenames is not None:
             # we must remake the trajectory reporter for each batch
@@ -475,25 +555,27 @@ def static(
                 filenames=[og_filenames[idx] for idx in batch_indices]
             )
 
-        model_outputs = model(substate)
+        model_outputs = model(sub_state)
 
-        substate = StaticState(
-            **vars(substate),
+        sub_state = StaticState(
+            **vars(sub_state),
             energy=model_outputs["energy"],
             forces=model_outputs["forces"] if model.compute_forces else None,
             stress=model_outputs["stress"] if model.compute_stress else None,
         )
 
-        props = trajectory_reporter.report(substate, 0, model=model)
+        props = trajectory_reporter.report(sub_state, 0, model=model)
         all_props.extend(props)
 
-        final_states.append(substate)
+        if tqdm_pbar:
+            tqdm_pbar.update(sub_state.n_batches)
 
     trajectory_reporter.finish()
 
     if isinstance(batch_iterator, BinningAutoBatcher):
         # reorder properties to match original order of states
         original_indices = list(chain.from_iterable(batch_iterator.index_bins))
-        return [all_props[idx] for idx in original_indices]
+        indexed_props = list(zip(original_indices, all_props, strict=True))
+        return [prop for _, prop in sorted(indexed_props, key=lambda x: x[0])]
 
     return all_props

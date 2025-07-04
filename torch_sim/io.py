@@ -17,16 +17,16 @@ from typing import TYPE_CHECKING
 import numpy as np
 import torch
 
+import torch_sim as ts
+
 
 if TYPE_CHECKING:
     from ase import Atoms
     from phonopy.structure.atoms import PhonopyAtoms
     from pymatgen.core import Structure
 
-    from torch_sim.state import SimState
 
-
-def state_to_atoms(state: "SimState") -> list["Atoms"]:
+def state_to_atoms(state: "ts.SimState") -> list["Atoms"]:
     """Convert a SimState to a list of ASE Atoms objects.
 
     Args:
@@ -72,7 +72,7 @@ def state_to_atoms(state: "SimState") -> list["Atoms"]:
     return atoms_list
 
 
-def state_to_structures(state: "SimState") -> list["Structure"]:
+def state_to_structures(state: "ts.SimState") -> list["Structure"]:
     """Convert a SimState to a list of Pymatgen Structure objects.
 
     Args:
@@ -93,7 +93,7 @@ def state_to_structures(state: "SimState") -> list["Structure"]:
         from pymatgen.core.periodic_table import Element
     except ImportError:
         raise ImportError(
-            "Pymatgen is required for state_to_structure conversion"
+            "Pymatgen is required for state_to_structures conversion"
         ) from None
 
     # Convert tensors to numpy arrays on CPU
@@ -128,7 +128,7 @@ def state_to_structures(state: "SimState") -> list["Structure"]:
     return structures
 
 
-def state_to_phonopy(state: "SimState") -> list["PhonopyAtoms"]:
+def state_to_phonopy(state: "ts.SimState") -> list["PhonopyAtoms"]:
     """Convert a SimState to a list of PhonopyAtoms objects.
 
     Args:
@@ -148,9 +148,7 @@ def state_to_phonopy(state: "SimState") -> list["PhonopyAtoms"]:
         from ase.data import chemical_symbols
         from phonopy.structure.atoms import PhonopyAtoms
     except ImportError:
-        raise ImportError(
-            "Phonopy is required for state_to_phonopy_atoms conversion"
-        ) from None
+        raise ImportError("Phonopy is required for state_to_phonopy conversion") from None
 
     # Convert tensors to numpy arrays on CPU
     positions = state.positions.detach().cpu().numpy()
@@ -183,7 +181,7 @@ def atoms_to_state(
     atoms: "Atoms | list[Atoms]",
     device: torch.device,
     dtype: torch.dtype,
-) -> "SimState":
+) -> "ts.SimState":
     """Convert an ASE Atoms object or list of Atoms objects to a SimState.
 
     Args:
@@ -204,12 +202,10 @@ def atoms_to_state(
         - Input masses should be in amu
         - All systems must have consistent periodic boundary conditions
     """
-    from torch_sim.state import SimState
-
     try:
         from ase import Atoms
     except ImportError:
-        raise ImportError("ASE is required for state_to_atoms conversion") from None
+        raise ImportError("ASE is required for atoms_to_state conversion") from None
 
     atoms_list = [atoms] if isinstance(atoms, Atoms) else atoms
 
@@ -239,7 +235,7 @@ def atoms_to_state(
     if not all(all(a.pbc) == all(atoms_list[0].pbc) for a in atoms_list):
         raise ValueError("All systems must have the same periodic boundary conditions")
 
-    return SimState(
+    return ts.SimState(
         positions=positions,
         masses=masses,
         cell=cell,
@@ -253,7 +249,7 @@ def structures_to_state(
     structure: "Structure | list[Structure]",
     device: torch.device,
     dtype: torch.dtype,
-) -> "SimState":
+) -> "ts.SimState":
     """Create a SimState from pymatgen Structure(s).
 
     Args:
@@ -274,13 +270,11 @@ def structures_to_state(
         - Cell matrix follows ASE convention: [[ax,ay,az],[bx,by,bz],[cx,cy,cz]]
         - Assumes periodic boundary conditions from Structure
     """
-    from torch_sim.state import SimState
-
     try:
         from pymatgen.core import Structure
     except ImportError:
         raise ImportError(
-            "Pymatgen is required for state_to_structure conversion"
+            "Pymatgen is required for structures_to_state conversion"
         ) from None
 
     struct_list = [structure] if isinstance(structure, Structure) else structure
@@ -309,7 +303,7 @@ def structures_to_state(
         torch.arange(len(struct_list), device=device), atoms_per_batch
     )
 
-    return SimState(
+    return ts.SimState(
         positions=positions,
         masses=masses,
         cell=cell,
@@ -323,7 +317,7 @@ def phonopy_to_state(
     phonopy_atoms: "PhonopyAtoms | list[PhonopyAtoms]",
     device: torch.device,
     dtype: torch.dtype,
-) -> "SimState":
+) -> "ts.SimState":
     """Create state tensors from a PhonopyAtoms object or list of PhonopyAtoms objects.
 
     Args:
@@ -345,8 +339,6 @@ def phonopy_to_state(
         - PhonopyAtoms does not have pbc attribute for Supercells, assumes True
         - Cell matrix follows ASE convention: [[ax,ay,az],[bx,by,bz],[cx,cy,cz]]
     """
-    from torch_sim.state import SimState
-
     try:
         from phonopy.structure.atoms import PhonopyAtoms
     except ImportError:
@@ -389,7 +381,7 @@ def phonopy_to_state(
         raise ValueError("All systems must have the same periodic boundary conditions")
     """
 
-    return SimState(
+    return ts.SimState(
         positions=positions,
         masses=masses,
         cell=cell,

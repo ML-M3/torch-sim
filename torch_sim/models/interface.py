@@ -28,11 +28,13 @@ Notes:
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Literal, Self
+from typing import Self
 
 import torch
 
-from torch_sim.state import SimState, StateDict
+import torch_sim as ts
+from torch_sim.state import SimState
+from torch_sim.typing import MemoryScaling, StateDict
 
 
 class ModelInterface(ABC):
@@ -48,7 +50,7 @@ class ModelInterface(ABC):
         dtype (torch.dtype): Data type used for tensor calculations.
         compute_stress (bool): Whether the model calculates stress tensors.
         compute_forces (bool): Whether the model calculates atomic forces.
-        memory_scales_with (Literal["n_atoms", "n_atoms_x_density"]): The metric
+        memory_scales_with (MemoryScaling): The metric
             that the model scales with. "n_atoms" uses only atom count and is suitable
             for models that have a fixed number of neighbors. "n_atoms_x_density" uses
             atom count multiplied by number density and is better for models with
@@ -103,11 +105,7 @@ class ModelInterface(ABC):
 
     @property
     def device(self) -> torch.device:
-        """The device of the model.
-
-        Returns:
-            The device of the model
-        """
+        """The device of the model."""
         return self._device
 
     @device.setter
@@ -119,11 +117,7 @@ class ModelInterface(ABC):
 
     @property
     def dtype(self) -> torch.dtype:
-        """The data type of the model.
-
-        Returns:
-            The data type of the model
-        """
+        """The data type of the model."""
         return self._dtype
 
     @dtype.setter
@@ -135,11 +129,7 @@ class ModelInterface(ABC):
 
     @property
     def compute_stress(self) -> bool:
-        """Whether the model computes stresses.
-
-        Returns:
-            Whether the model computes stresses
-        """
+        """Whether the model computes stresses."""
         return self._compute_stress
 
     @compute_stress.setter
@@ -151,11 +141,7 @@ class ModelInterface(ABC):
 
     @property
     def compute_forces(self) -> bool:
-        """Whether the model computes forces.
-
-        Returns:
-            Whether the model computes forces
-        """
+        """Whether the model computes forces."""
         return self._compute_forces
 
     @compute_forces.setter
@@ -166,15 +152,12 @@ class ModelInterface(ABC):
         )
 
     @property
-    def memory_scales_with(self) -> Literal["n_atoms", "n_atoms_x_density"]:
+    def memory_scales_with(self) -> MemoryScaling:
         """The metric that the model scales with.
 
         Models with radial neighbor cutoffs scale with "n_atoms_x_density",
         while models with a fixed number of neighbors scale with "n_atoms".
         Default is "n_atoms_x_density" because most models are radial cutoff based.
-
-        Returns:
-            The metric that the model scales with
         """
         return getattr(self, "_memory_scales_with", "n_atoms_x_density")
 
@@ -197,7 +180,7 @@ class ModelInterface(ABC):
             **kwargs: Additional model-specific parameters.
 
         Returns:
-            dict[str, torch.Tensor]: Dictionary containing computed properties:
+            dict[str, torch.Tensor]: Computed properties:
                 - "energy": Potential energy with shape [n_batches]
                 - "forces": Atomic forces with shape [n_atoms, 3]
                 - "stress": Stress tensor with shape [n_batches, 3, 3] (if
@@ -216,10 +199,8 @@ class ModelInterface(ABC):
         """
 
 
-def validate_model_outputs(
-    model: ModelInterface,
-    device: torch.device,
-    dtype: torch.dtype,
+def validate_model_outputs(  # noqa: C901, PLR0915
+    model: ModelInterface, device: torch.device, dtype: torch.dtype
 ) -> None:
     """Validate the outputs of a model implementation against the interface requirements.
 
@@ -250,12 +231,9 @@ def validate_model_outputs(
     """
     from ase.build import bulk
 
-    from torch_sim.io import atoms_to_state
-
-    assert model.dtype is not None
-    assert model.device is not None
-    assert model.compute_stress is not None
-    assert model.compute_forces is not None
+    for attr in ("dtype", "device", "compute_stress", "compute_forces"):
+        if not hasattr(model, attr):
+            raise ValueError(f"model.{attr} is not set")
 
     try:
         if not model.compute_stress:
@@ -274,7 +252,7 @@ def validate_model_outputs(
     si_atoms = bulk("Si", "diamond", a=5.43, cubic=True)
     fe_atoms = bulk("Fe", "fcc", a=5.26, cubic=True).repeat([3, 1, 1])
 
-    sim_state = atoms_to_state([si_atoms, fe_atoms], device, dtype)
+    sim_state = ts.io.atoms_to_state([si_atoms, fe_atoms], device, dtype)
 
     og_positions = sim_state.positions.clone()
     og_cell = sim_state.cell.clone()
@@ -284,52 +262,56 @@ def validate_model_outputs(
     model_output = model.forward(sim_state)
 
     # assert model did not mutate the input
-    assert torch.allclose(og_positions, sim_state.positions)
-    assert torch.allclose(og_cell, sim_state.cell)
-    assert torch.allclose(og_batch, sim_state.batch)
-    assert torch.allclose(og_atomic_numbers, sim_state.atomic_numbers)
+    if not torch.allclose(og_positions, sim_state.positions):
+        raise ValueError(f"{og_positions=} != {sim_state.positions=}")
+    if not torch.allclose(og_cell, sim_state.cell):
+        raise ValueError(f"{og_cell=} != {sim_state.cell=}")
+    if not torch.allclose(og_batch, sim_state.batch):
+        raise ValueError(f"{og_batch=} != {sim_state.batch=}")
+    if not torch.allclose(og_atomic_numbers, sim_state.atomic_numbers):
+        raise ValueError(f"{og_atomic_numbers=} != {sim_state.atomic_numbers=}")
 
     # assert model output has the correct keys
-    assert "energy" in model_output
-    assert "forces" in model_output if force_computed else True
-    assert "stress" in model_output if stress_computed else True
+    if "energy" not in model_output:
+        raise ValueError("energy not in model output")
+    if force_computed and "forces" not in model_output:
+        raise ValueError("forces not in model output")
+    if stress_computed and "stress" not in model_output:
+        raise ValueError("stress not in model output")
 
     # assert model output shapes are correct
-    assert model_output["energy"].shape == (2,)
-    assert model_output["forces"].shape == (20, 3) if force_computed else True
-    assert model_output["stress"].shape == (2, 3, 3) if stress_computed else True
+    if model_output["energy"].shape != (2,):
+        raise ValueError(f"{model_output['energy'].shape=} != (2,)")
+    if force_computed and model_output["forces"].shape != (20, 3):
+        raise ValueError(f"{model_output['forces'].shape=} != (20, 3)")
+    if stress_computed and model_output["stress"].shape != (2, 3, 3):
+        raise ValueError(f"{model_output['stress'].shape=} != (2, 3, 3)")
 
-    si_state = atoms_to_state([si_atoms], device, dtype)
-    fe_state = atoms_to_state([fe_atoms], device, dtype)
+    si_state = ts.io.atoms_to_state([si_atoms], device, dtype)
+    fe_state = ts.io.atoms_to_state([fe_atoms], device, dtype)
 
     si_model_output = model.forward(si_state)
-    assert torch.allclose(
+    if not torch.allclose(
         si_model_output["energy"], model_output["energy"][0], atol=10e-3
-    )
-    assert torch.allclose(
-        si_model_output["forces"],
-        model_output["forces"][: si_state.n_atoms],
+    ):
+        raise ValueError(f"{si_model_output['energy']=} != {model_output['energy'][0]=}")
+    if not torch.allclose(
+        forces := si_model_output["forces"],
+        expected_forces := model_output["forces"][: si_state.n_atoms],
         atol=10e-3,
-    )
-    # assert torch.allclose(
-    #     si_model_output["stress"],
-    #     model_output["stress"][0],
-    #     atol=10e-3,
-    # )
+    ):
+        raise ValueError(f"{forces=} != {expected_forces=}")
 
     fe_model_output = model.forward(fe_state)
     si_model_output = model.forward(si_state)
 
-    assert torch.allclose(
+    if not torch.allclose(
         fe_model_output["energy"], model_output["energy"][1], atol=10e-2
-    )
-    assert torch.allclose(
-        fe_model_output["forces"],
-        model_output["forces"][si_state.n_atoms :],
+    ):
+        raise ValueError(f"{fe_model_output['energy']=} != {model_output['energy'][1]=}")
+    if not torch.allclose(
+        forces := fe_model_output["forces"],
+        expected_forces := model_output["forces"][si_state.n_atoms :],
         atol=10e-2,
-    )
-    # assert torch.allclose(
-    #     arr_model_output["stress"],
-    #     model_output["stress"][1],
-    #     atol=10e-3,
-    # )
+    ):
+        raise ValueError(f"{forces=} != {expected_forces=}")

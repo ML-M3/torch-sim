@@ -2,7 +2,7 @@
 
 # ruff: noqa: FBT001, FBT002, RUF002, RUF003, RET503
 
-from typing import Any
+from typing import Any, Final
 
 import torch
 from torch.autograd import Function
@@ -122,7 +122,7 @@ def expm_frechet_block_enlarge(
 
 # Maximal values ell_m of ||2**-s A|| such that the backward error bound
 # does not exceed 2**-53.
-ell_table_61 = (
+ell_table_61: Final = (
     None,
     # 1
     2.11e-8,
@@ -376,7 +376,7 @@ def matrix_exp(A: torch.Tensor) -> torch.Tensor:
         A: Input matrix
 
     Returns:
-        Matrix exponential of A
+        torch.Tensor: Matrix exponential of A
     """
     return torch.matrix_exp(A)
 
@@ -390,7 +390,7 @@ def vec(M: torch.Tensor) -> torch.Tensor:
         M: Input matrix
 
     Returns:
-        Output vector
+        torch.Tensor: Output vector
     """
     return M.t().reshape(-1)
 
@@ -408,7 +408,7 @@ def expm_frechet_kronform(
             (crashes, non-termination) if the inputs do contain infinities or NaNs.
 
     Returns:
-        K: Kronecker form of the Frechet derivative of the matrix exponential
+        torch.Tensor: Kronecker form of the Frechet derivative of the matrix exponential
             with shape (N*N, N*N)
     """
     if check_finite and not torch.isfinite(A).all():
@@ -461,15 +461,13 @@ def expm_cond(A: torch.Tensor, check_finite: bool = True) -> torch.Tensor:
     K = expm_frechet_kronform(A, check_finite=False)
 
     # The following norm choices are deliberate.
-    # The norms of A and X are Frobenius norms,
-    # and the norm of K is the induced 2-norm.
-    norm_p = "fro"
+    # norms of A and X are Frobenius norms, and norm of K is the induced 2-norm.
+    norm_p = "fro"  # codespell:ignore
     A_norm = torch.norm(A, p=norm_p)
     X_norm = torch.norm(X, p=norm_p)
     K_norm = torch.linalg.matrix_norm(K, ord=2)
 
-    # kappa
-    return (K_norm * A_norm) / X_norm
+    return (K_norm * A_norm) / X_norm  # kappa
 
 
 class expm(Function):  # noqa: N801
@@ -519,7 +517,7 @@ def _is_valid_matrix(T: torch.Tensor, n: int = 3) -> bool:
         n: The expected dimension of the matrix, default=3
 
     Returns:
-        True if T is a valid nxn tensor, False otherwise
+        bool: True if T is a valid nxn tensor, False otherwise
     """
     return isinstance(T, torch.Tensor) and T.shape == (n, n)
 
@@ -986,6 +984,39 @@ def matrix_log_33(
             "Falling back to scipy"
         )
         if fallback_warning:
-            print(msg)
+            print(msg)  # noqa: T201
         # Fall back to scipy implementation
         return matrix_log_scipy(matrix).to(sim_dtype)
+
+
+def batched_vdot(
+    x: torch.Tensor, y: torch.Tensor, batch_indices: torch.Tensor
+) -> torch.Tensor:
+    """Computes batched vdot (sum of element-wise product) for groups of vectors.
+
+    Args:
+        x: Tensor of shape [N_total_entities, D] (e.g., forces, velocities).
+        y: Tensor of shape [N_total_entities, D].
+        batch_indices: Tensor of shape [N_total_entities] indicating batch membership.
+
+    Returns:
+        Tensor: shape [n_batches] where each element is the sum(x_i * y_i)
+    for entities belonging to that batch,
+        summed over all components D and all entities in the batch.
+    """
+    if (
+        x.ndim != 2
+        or y.ndim != 2
+        or batch_indices.ndim != 1
+        or x.shape != y.shape
+        or x.shape[0] != batch_indices.shape[0]
+    ):
+        raise ValueError(f"Invalid input shapes: {x.shape=}, {batch_indices.shape=}")
+
+    if batch_indices.min() < 0:
+        raise ValueError("batch_indices must be non-negative")
+
+    output = torch.zeros(batch_indices.max() + 1, dtype=x.dtype, device=x.device)
+    output.scatter_add_(dim=0, index=batch_indices, src=(x * y).sum(dim=1))
+
+    return output

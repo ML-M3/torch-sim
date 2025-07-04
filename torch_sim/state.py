@@ -6,45 +6,20 @@ operations and conversion to/from various atomistic formats.
 
 import copy
 import importlib
-import typing
 import warnings
 from dataclasses import dataclass, field
-from typing import Literal, Self, TypeVar, Union
+from typing import TYPE_CHECKING, Literal, Self
 
 import torch
 
-from torch_sim.io import (
-    atoms_to_state,
-    phonopy_to_state,
-    state_to_atoms,
-    state_to_phonopy,
-    state_to_structures,
-    structures_to_state,
-)
+import torch_sim as ts
+from torch_sim.typing import StateLike
 
 
-if typing.TYPE_CHECKING:
+if TYPE_CHECKING:
     from ase import Atoms
     from phonopy.structure.atoms import PhonopyAtoms
     from pymatgen.core import Structure
-
-
-_T = TypeVar("_T", bound="SimState")
-StateLike = Union[
-    "Atoms",
-    "Structure",
-    "PhonopyAtoms",
-    list["Atoms"],
-    list["Structure"],
-    list["PhonopyAtoms"],
-    _T,
-    list[_T],
-]
-
-StateDict = dict[
-    Literal["positions", "masses", "cell", "pbc", "atomic_numbers", "batch"],
-    torch.Tensor,
-]
 
 
 @dataclass
@@ -131,6 +106,12 @@ class SimState:
                 f"masses {shapes[1]}, atomic_numbers {shapes[2]}"
             )
 
+        if self.cell.ndim != 3 and self.batch is None:
+            self.cell = self.cell.unsqueeze(0)
+
+        if self.cell.shape[-2:] != (3, 3):
+            raise ValueError("Cell must have shape (n_batches, 3, 3)")
+
         if self.batch is None:
             self.batch = torch.zeros(self.n_atoms, device=self.device, dtype=torch.int64)
         else:
@@ -139,70 +120,56 @@ class SimState:
             if not torch.all(counts == torch.bincount(self.batch)):
                 raise ValueError("Batch indices must be unique consecutive integers")
 
+        if self.cell.shape[0] != self.n_batches:
+            raise ValueError(
+                f"Cell must have shape (n_batches, 3, 3), got {self.cell.shape}"
+            )
+
     @property
     def wrap_positions(self) -> torch.Tensor:
-        """Get positions wrapped into the primary unit cell.
-
-        Returns:
-            torch.Tensor: Atomic positions wrapped according to periodic boundary
-                conditions if pbc=True, otherwise returns unwrapped positions with
-                shape (n_atoms, 3).
+        """Atomic positions wrapped according to periodic boundary conditions if pbc=True,
+        otherwise returns unwrapped positions with shape (n_atoms, 3).
         """
         # TODO: implement a wrapping method
         return self.positions
 
     @property
     def device(self) -> torch.device:
-        """Get the device of the positions tensor.
-
-        Returns:
-            torch.device: The device where the tensor data is located
-        """
+        """The device where the tensor data is located."""
         return self.positions.device
 
     @property
     def dtype(self) -> torch.dtype:
-        """Get the data type of the positions tensor.
-
-        Returns:
-            torch.dtype: The data type of the positions tensor
-        """
+        """The data type of the positions tensor."""
         return self.positions.dtype
 
     @property
     def n_atoms(self) -> int:
-        """Get the total number of atoms in the system across all batches.
-
-        Returns:
-            int: Total number of atoms in the system
-        """
+        """Total number of atoms in the system across all batches."""
         return self.positions.shape[0]
 
     @property
-    def n_batches(self) -> int:
-        """Get the number of batches in the system.
+    def n_atoms_per_batch(self) -> torch.Tensor:
+        """Number of atoms per batch."""
+        return (
+            self.batch.bincount()
+            if self.batch is not None
+            else torch.tensor([self.n_atoms], device=self.device)
+        )
 
-        Returns:
-            int: Number of batches in the system
-        """
+    @property
+    def n_batches(self) -> int:
+        """Number of batches in the system."""
         return torch.unique(self.batch).shape[0]
 
     @property
     def volume(self) -> torch.Tensor:
-        """Get the volume of the system.
-
-        Returns:
-            torch.Tensor: Volume of the system with shape (n_batches,)
-        """
+        """Volume of the system."""
         return torch.det(self.cell) if self.pbc else None
 
     @property
     def column_vector_cell(self) -> torch.Tensor:
-        """Get the unit cell following the column vector convention.
-
-        Returns:
-            The unit cell in a column vector format
-        """
+        """Unit cell following the column vector convention."""
         return self.cell
 
     @column_vector_cell.setter
@@ -216,12 +183,8 @@ class SimState:
 
     @property
     def row_vector_cell(self) -> torch.Tensor:
-        """Get the unit cell following the row vector convention.
-
-        Returns:
-            The unit cell in a row vector format
-        """
-        return self.cell.transpose(-2, -1)
+        """Unit cell following the row vector convention."""
+        return self.cell.mT
 
     @row_vector_cell.setter
     def row_vector_cell(self, value: torch.Tensor) -> None:
@@ -230,7 +193,7 @@ class SimState:
         Args:
             value: The unit cell as a row vector
         """
-        self.cell = value.transpose(-2, -1)
+        self.cell = value.mT
 
     def clone(self) -> Self:
         """Create a deep copy of the SimState.
@@ -256,7 +219,7 @@ class SimState:
         Returns:
             list[Atoms]: A list of ASE Atoms objects, one per batch
         """
-        return state_to_atoms(self)
+        return ts.io.state_to_atoms(self)
 
     def to_structures(self) -> list["Structure"]:
         """Convert the SimState to a list of pymatgen Structure objects.
@@ -264,7 +227,7 @@ class SimState:
         Returns:
             list[Structure]: A list of pymatgen Structure objects, one per batch
         """
-        return state_to_structures(self)
+        return ts.io.state_to_structures(self)
 
     def to_phonopy(self) -> list["PhonopyAtoms"]:
         """Convert the SimState to a list of PhonopyAtoms objects.
@@ -272,7 +235,7 @@ class SimState:
         Returns:
             list[PhonopyAtoms]: A list of PhonopyAtoms objects, one per batch
         """
-        return state_to_phonopy(self)
+        return ts.io.state_to_phonopy(self)
 
     def split(self) -> list[Self]:
         """Split the SimState into a list of single-batch SimStates.
@@ -364,12 +327,12 @@ class DeformGradMixin:
     @property
     def reference_row_vector_cell(self) -> torch.Tensor:
         """Get the original unit cell in terms of row vectors."""
-        return self.reference_cell.transpose(-2, -1)
+        return self.reference_cell.mT
 
     @reference_row_vector_cell.setter
     def reference_row_vector_cell(self, value: torch.Tensor) -> None:
         """Set the original unit cell in terms of row vectors."""
-        self.reference_cell = value.transpose(-2, -1)
+        self.reference_cell = value.mT
 
     @staticmethod
     def _deform_grad(
@@ -487,8 +450,8 @@ def infer_property_scope(
             - "globalize_warn": Treat ambiguous properties as global with a warning
 
     Returns:
-        dict[Literal["global", "per_atom", "per_batch"], list[str]]: Dictionary mapping
-            each scope category to a list of property names
+        dict[Literal["global", "per_atom", "per_batch"], list[str]]: Map of scope
+            category to list of property names
 
     Raises:
         ValueError: If n_atoms equals n_batches (making scope inference ambiguous) or
@@ -564,8 +527,8 @@ def _get_property_attrs(
             properties
 
     Returns:
-        dict[str, dict]: Dictionary with 'global', 'per_atom', and 'per_batch' keys,
-            each containing a dictionary of attribute names to values
+        dict[str, dict]: Keys are 'global', 'per_atom', and 'per_batch', each
+            containing a dictionary of attribute names to values
     """
     scope = infer_property_scope(state, ambiguous_handling=ambiguous_handling)
 
@@ -596,15 +559,15 @@ def _filter_attrs_by_mask(
     Selects subsets of attributes based on boolean masks for atoms and batches.
 
     Args:
-        attrs (dict[str, dict]): Dictionary with 'global', 'per_atom', and 'per_batch'
-            attributes
+        attrs (dict[str, dict]): Keys are 'global', 'per_atom', and 'per_batch', each
+            containing a dictionary of attribute names to values
         atom_mask (torch.Tensor): Boolean mask for atoms to include with shape
             (n_atoms,)
         batch_mask (torch.Tensor): Boolean mask for batches to include with shape
             (n_batches,)
 
     Returns:
-        dict: Dictionary of filtered attributes with appropriate handling for each scope
+        dict: Filtered attributes with appropriate handling for each scope
     """
     filtered_attrs = {}
 
@@ -654,7 +617,9 @@ def _split_state(
     Args:
         state (SimState): The SimState to split
         ambiguous_handling ("error" | "globalize"): How to handle ambiguous
-            properties
+            properties. If "error", an error is raised if a property has ambiguous
+            scope. If "globalize", properties with ambiguous scope are treated as
+            global.
 
     Returns:
         list[SimState]: A list of SimState objects, each containing a single
@@ -706,7 +671,9 @@ def _pop_states(
         state (SimState): The SimState to modify
         pop_indices (list[int] | torch.Tensor): The batch indices to extract and remove
         ambiguous_handling ("error" | "globalize"): How to handle ambiguous
-            properties
+            properties. If "error", an error is raised if a property has ambiguous
+            scope. If "globalize", properties with ambiguous scope are treated as
+            global.
 
     Returns:
         tuple[SimState, list[SimState]]: A tuple containing:
@@ -919,9 +886,9 @@ def initialize_state(
         return concatenate_states(system)
 
     converters = [
-        ("pymatgen.core", "Structure", structures_to_state),
-        ("ase", "Atoms", atoms_to_state),
-        ("phonopy.structure.atoms", "PhonopyAtoms", phonopy_to_state),
+        ("pymatgen.core", "Structure", ts.io.structures_to_state),
+        ("ase", "Atoms", ts.io.atoms_to_state),
+        ("phonopy.structure.atoms", "PhonopyAtoms", ts.io.phonopy_to_state),
     ]
 
     # Try each converter

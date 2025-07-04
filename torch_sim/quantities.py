@@ -26,8 +26,7 @@ def calc_kT(  # noqa: N802
     velocities: torch.Tensor | None = None,
     batch: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Calculate temperature from momenta/velocities and masses.
-    Temperature returned in energy units.
+    """Calculate temperature in energy units from momenta/velocities and masses.
 
     Args:
         momenta (torch.Tensor): Particle momenta, shape (n_particles, n_dim)
@@ -37,7 +36,7 @@ def calc_kT(  # noqa: N802
         each particle
 
     Returns:
-        Scalar temperature value
+        torch.Tensor: Scalar temperature value
     """
     if momenta is not None and velocities is not None:
         raise ValueError("Must pass either momenta or velocities, not both")
@@ -45,12 +44,12 @@ def calc_kT(  # noqa: N802
     if momenta is None and velocities is None:
         raise ValueError("Must pass either momenta or velocities")
 
-    if momenta is not None:
-        # If momentum provided, calculate v^2 = p^2/m^2
-        squared_term = (momenta**2) / masses.unsqueeze(-1)
-    else:
+    if momenta is None:
         # If velocity provided, calculate mv^2
         squared_term = (velocities**2) * masses.unsqueeze(-1)
+    else:
+        # If momentum provided, calculate v^2 = p^2/m^2
+        squared_term = (momenta**2) / masses.unsqueeze(-1)
 
     if batch is None:
         # Count total degrees of freedom
@@ -88,7 +87,7 @@ def calc_temperature(
         units (object): Units to return the temperature in
 
     Returns:
-        Temperature value in specified units
+        torch.Tensor: Temperature value in specified units
     """
     return calc_kT(momenta, masses, velocities, batch) / units
 
@@ -118,11 +117,9 @@ def calc_kinetic_energy(
     if momenta is None and velocities is None:
         raise ValueError("Must pass either momenta or velocities")
 
-    if momenta is None:
-        # Using velocities
+    if momenta is None:  # Using velocities
         squared_term = (velocities**2) * masses.unsqueeze(-1)
-    else:
-        # Using momentum
+    else:  # Using momenta
         squared_term = (momenta**2) / masses.unsqueeze(-1)
 
     if batch is None:
@@ -131,6 +128,17 @@ def calc_kinetic_energy(
     return 0.5 * torch.segment_reduce(
         flattened_squared, reduce="sum", lengths=torch.bincount(batch)
     )
+
+
+def get_pressure(
+    stress: torch.Tensor, kinetic_energy: torch.Tensor, volume: torch.Tensor, dim: int = 3
+) -> torch.Tensor:
+    """Compute the pressure from the stress tensor.
+
+    The stress tensor is defined as 1/volume * dU/de_ij
+    So the pressure is -1/volume * trace(dU/de_ij)
+    """
+    return 1 / dim * ((2 * kinetic_energy / volume) - torch.einsum("...ii", stress))
 
 
 def calc_heat_flux(
@@ -263,18 +271,15 @@ def batchwise_max_force(state: SimState) -> torch.Tensor:
     """Compute the maximum force per batch.
 
     Args:
-        state (SimState): SimState to compute the maximum force per batch for
+        state (SimState): State to compute the maximum force per batch for.
 
     Returns:
-        Tensor of maximum forces per batch
+        torch.Tensor: Maximum forces per batch
     """
     batch_wise_max_force = torch.zeros(
         state.n_batches, device=state.device, dtype=state.dtype
     )
     max_forces = state.forces.norm(dim=1)
     return batch_wise_max_force.scatter_reduce(
-        dim=0,
-        index=state.batch,
-        src=max_forces,
-        reduce="amax",
+        dim=0, index=state.batch, src=max_forces, reduce="amax"
     )

@@ -4,7 +4,7 @@ different volumes and FC2 calculations with MACE.
 
 # /// script
 # dependencies = [
-#     "mace-torch>=0.3.11",
+#     "mace-torch>=0.3.12",
 #     "phonopy>=2.35",
 #     "pymatviz[export-figs]>=0.15.1",
 # ]
@@ -23,6 +23,7 @@ from phonopy.api_qha import PhonopyQHA
 from phonopy.structure.atoms import PhonopyAtoms
 
 import torch_sim as ts
+from torch_sim.models.mace import MaceModel, MaceUrls
 
 
 def get_relaxed_structure(
@@ -212,14 +213,13 @@ dtype = torch.float64
 autobatcher = False
 
 # Load the raw model
-mace_checkpoint_url = "https://github.com/ACEsuit/mace-mp/releases/download/mace_mpa_0/mace-mpa-0-medium.model"
 loaded_model = mace_mp(
-    model=mace_checkpoint_url,
+    model=MaceUrls.mace_mpa_medium,
     return_raw_model=True,
     default_dtype=dtype,
     device=device,
 )
-model = ts.models.MaceModel(
+model = MaceModel(
     model=loaded_model,
     device=device,
     compute_forces=True,

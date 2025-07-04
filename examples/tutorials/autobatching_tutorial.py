@@ -3,7 +3,7 @@
 #   <summary>Dependencies</summary>
 # /// script
 # dependencies = [
-#     "mace-torch>=0.3.11",
+#     "mace-torch>=0.3.12",
 # ]
 # ///
 # </details>
@@ -97,7 +97,7 @@ hardware, assuming you choose the right scaling metric.
 # %%
 from torch_sim.autobatching import estimate_max_memory_scaler
 from mace.calculators.foundations_models import mace_mp
-from torch_sim.models import MaceModel
+from torch_sim.models.mace import MaceModel
 
 # Initialize your model
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

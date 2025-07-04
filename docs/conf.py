@@ -1,4 +1,4 @@
-# ruff: noqa: E501
+# ruff: noqa: E501, INP001
 
 """Sphinx configuration file."""
 
@@ -66,7 +66,7 @@ autodoc_mock_imports = [
     "fairchem",
     "mace",
     "mattersim",
-    "metatensor",
+    "metatomic",
     "orb",
     "sevennet",
     "graphpes",
