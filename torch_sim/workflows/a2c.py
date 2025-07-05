@@ -746,7 +746,7 @@ def get_unit_cell_relaxed_structure(
     results = model(state)
     init_energy = [e.item() for e in results["energy"]]
     init_stress = results["stress"]
-    init_pressure = get_pressure(init_stress, 0.0, state.volume)
+    init_pressure = [p.item() for p in get_pressure(init_stress, 0.0, state.volume)]
     print(
         f"Initial energy: {[f'{e:.4f}' for e in init_energy]} eV, "
         f"Initial pressure: {[f'{p:.4f}' for p in init_pressure]} eV/A^3"
@@ -773,7 +773,7 @@ def get_unit_cell_relaxed_structure(
 
     final_energy = [e.item() for e in final_results["energy"]]
     final_stress = final_results["stress"]
-    final_pressure = get_pressure(final_stress, 0.0, state.volume)
+    final_pressure = [p.item() for p in get_pressure(final_stress, 0.0, state.volume)]
     print(
         f"Final energy: {[f'{e:.4f}' for e in final_energy]} eV, "
         f"Final pressure: {[f'{p:.4f}' for p in final_pressure]} eV/A^3"
@@ -818,7 +818,7 @@ def get_frechet_cell_relaxed_structure(
     results = model(state)
     init_energy = [e.item() for e in results["energy"]]
     init_stress = results["stress"]
-    init_pressure = get_pressure(init_stress, 0.0, state.volume)
+    init_pressure = [p.item() for p in get_pressure(init_stress, 0.0, state.volume)]
     print(
         f"Initial energy: {[f'{e:.4f}' for e in init_energy]} eV, "
         f"Initial pressure: {[f'{p:.4f}' for p in init_pressure]} eV/A^3"
@@ -845,7 +845,7 @@ def get_frechet_cell_relaxed_structure(
 
     final_energy = [e.item() for e in final_results["energy"]]
     final_stress = final_results["stress"]
-    final_pressure = get_pressure(final_stress, 0.0, state.volume)
+    final_pressure = [p.item() for p in get_pressure(final_stress, 0.0, state.volume)]
     print(
         f"Final energy: {[f'{e:.4f}' for e in final_energy]} eV, "
         f"Final pressure: {[f'{p:.4f}' for p in final_pressure]} eV/A^3"
@@ -903,7 +903,7 @@ def get_relaxed_structure(
 
     final_energy = [e.item() for e in final_results["energy"]]
     final_stress = final_results["stress"]
-    final_pressure = get_pressure(final_stress, 0.0, state.volume)
+    final_pressure = [p.item() for p in get_pressure(final_stress, 0.0, state.volume)]
     print(
         f"Final energy: {[f'{e:.4f}' for e in final_energy]} eV, "
         f"Final pressure: {[f'{p:.4f}' for p in final_pressure]} eV/A^3"

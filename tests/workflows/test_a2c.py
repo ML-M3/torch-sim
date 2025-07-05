@@ -4,7 +4,7 @@ from pymatgen.core.composition import Composition
 
 import torch_sim as ts
 from torch_sim.models.soft_sphere import SoftSphereModel
-from torch_sim.optimizers import UnitCellFireState
+from torch_sim.optimizers import FrechetCellFIREState, UnitCellFireState
 from torch_sim.workflows import a2c
 
 
@@ -375,6 +375,33 @@ def test_get_unit_cell_relaxed_structure(max_iter: int, device: torch.device) ->
 
     # Basic checks
     assert isinstance(relaxed_state, UnitCellFireState)
+    assert logger["energy"].shape[0] == max_iter
+    assert isinstance(final_energy[0], float)
+    assert isinstance(final_pressure[0], float)
+
+
+@pytest.mark.parametrize("max_iter", [1, 2, 3])
+def test_get_frechet_cell_relaxed_structure(max_iter: int, device: torch.device) -> None:
+    """Test unit cell relaxation with FIRE algorithm."""
+    # Create a simple test system
+    positions = torch.tensor(
+        [[0.0, 0.0, 0.0], [1.5, 0.0, 0.0], [0.0, 1.5, 0.0]], device=device
+    )
+    cell = torch.eye(3, device=device) * 5.0
+
+    # Create model and state
+    model = create_test_model(device=device)
+    state = create_test_state(positions, cell)
+
+    # Run relaxation with minimal steps
+    relaxed_state, logger, final_energy, final_pressure = (
+        a2c.get_frechet_cell_relaxed_structure(
+            state=state, model=model, max_iter=max_iter
+        )
+    )
+
+    # Basic checks
+    assert isinstance(relaxed_state, FrechetCellFIREState)
     assert logger["energy"].shape[0] == max_iter
     assert isinstance(final_energy[0], float)
     assert isinstance(final_pressure[0], float)
