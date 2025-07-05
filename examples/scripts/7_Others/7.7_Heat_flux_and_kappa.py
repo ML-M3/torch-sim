@@ -8,6 +8,8 @@
 # ]
 # ///
 
+import os
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -21,12 +23,15 @@ from torch_sim.units import MetalUnits as Units
 from torch_sim.units import uc
 
 
+SMOKE_TEST = os.getenv("CI") is not None
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 dtype = torch.float64
 
 # Using solid Ar w/ LJ for ease
 atoms = bulk("Ar", crystalstructure="fcc", a=5.376, cubic=True)
-atoms = atoms.repeat((4, 4, 4))
+N_repeats = 3 if SMOKE_TEST else 4
+atoms = atoms.repeat((N_repeats, N_repeats, N_repeats))
 state = ts.io.atoms_to_state(atoms, device=device, dtype=dtype)
 
 # Simulation parameters
@@ -36,8 +41,8 @@ sigma = 3.405  # Å
 cutoff = 13  # Å
 temperature = 70.0  # Kelvin
 timestep = 0.004  # ps (4 fs)
-num_steps_equilibration = 8000
-num_steps_production = 100000
+num_steps_equilibration = 800 if SMOKE_TEST else 8000
+num_steps_production = 10000 if SMOKE_TEST else 100000
 window_size = 200  # Length of correlation: dt * correlation_dt * window_size
 correlation_dt = 10  # Step delta between correlations
 
