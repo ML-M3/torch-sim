@@ -251,7 +251,7 @@ def calc_heat_flux(
         return conv_sum + virial_sum
 
     # All atoms in each batch
-    n_batches = int(torch.max(batch).item() + 1)
+    n_batches = torch.max(batch) + 1
     virial_sum = torch.zeros(
         (n_batches, 3), device=velocities.device, dtype=velocities.dtype
     )
