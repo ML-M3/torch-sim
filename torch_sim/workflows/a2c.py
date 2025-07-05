@@ -20,8 +20,7 @@ from pymatgen.core.composition import Composition
 import torch_sim as ts
 from torch_sim import transforms
 from torch_sim.models.soft_sphere import SoftSphereModel, SoftSphereMultiModel
-from torch_sim.optimizers import FireState, UnitCellFireState, fire
-from torch_sim.optimizers import unit_cell_fire as batched_unit_cell_fire
+from torch_sim.optimizers import FireState, UnitCellFireState, fire, unit_cell_fire
 
 
 def min_distance(
@@ -745,7 +744,7 @@ def get_unit_cell_relaxed_structure(
         f"Initial pressure: {[f'{p:.4f}' for p in init_pressure]} eV/A^3"
     )
 
-    unit_cell_fire_init, unit_cell_fire_update = batched_unit_cell_fire(
+    unit_cell_fire_init, unit_cell_fire_update = unit_cell_fire(
         model=model,
     )
     state = unit_cell_fire_init(state)
