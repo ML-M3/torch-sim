@@ -36,7 +36,7 @@ from torch_sim.workflows import a2c
 
 """
 # Example of how to use random_packed_structure_multi
-from torch_sim.utils.a2c import random_packed_structure_multi
+from torch_sim.workflows.a2c import random_packed_structure_multi
 
 comp = Composition("Fe80B20")
 cell = torch.tensor(
@@ -217,7 +217,7 @@ for i in tqdm(range(0, len(pymatgen_struct_list), batch_size)):
     batch_state = ts.io.structures_to_state(batch_structs, device=device, dtype=dtype)
 
     final_state, logger, final_energy, final_pressure = (
-        a2c.get_unit_cell_relaxed_structure(
+        a2c.get_frechet_cell_relaxed_structure(
             state=batch_state,
             model=model,
             max_iter=max_optim_steps,
