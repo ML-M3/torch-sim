@@ -746,10 +746,10 @@ def get_unit_cell_relaxed_structure(
     results = model(state)
     init_energy = [e.item() for e in results["energy"]]
     init_stress = results["stress"]
-    init_pressure = get_pressure(init_stress, 0.0, state.volume).item()
+    init_pressure = get_pressure(init_stress, 0.0, state.volume)
     print(
         f"Initial energy: {[f'{e:.4f}' for e in init_energy]} eV, "
-        f"Initial pressure: {[f'{p.item():.4f}' for p in init_pressure]} eV/A^3"
+        f"Initial pressure: {[f'{p:.4f}' for p in init_pressure]} eV/A^3"
     )
 
     unit_cell_fire_init, unit_cell_fire_update = unit_cell_fire(
@@ -776,7 +776,7 @@ def get_unit_cell_relaxed_structure(
     final_pressure = get_pressure(final_stress, 0.0, state.volume)
     print(
         f"Final energy: {[f'{e:.4f}' for e in final_energy]} eV, "
-        f"Final pressure: {[f'{p.item():.4f}' for p in final_pressure]} eV/A^3"
+        f"Final pressure: {[f'{p:.4f}' for p in final_pressure]} eV/A^3"
     )
     return state, logger, final_energy, final_pressure
 
@@ -818,10 +818,10 @@ def get_frechet_cell_relaxed_structure(
     results = model(state)
     init_energy = [e.item() for e in results["energy"]]
     init_stress = results["stress"]
-    init_pressure = [(torch.trace(stress) / 3.0).item() for stress in init_stress]
+    init_pressure = get_pressure(init_stress, 0.0, state.volume)
     print(
         f"Initial energy: {[f'{e:.4f}' for e in init_energy]} eV, "
-        f"Initial pressure: {[f'{p.item():.4f}' for p in init_pressure]} eV/A^3"
+        f"Initial pressure: {[f'{p:.4f}' for p in init_pressure]} eV/A^3"
     )
 
     frechet_cell_fire_init, frechet_cell_fire_update = frechet_cell_fire(
@@ -845,10 +845,10 @@ def get_frechet_cell_relaxed_structure(
 
     final_energy = [e.item() for e in final_results["energy"]]
     final_stress = final_results["stress"]
-    final_pressure = get_pressure(final_stress, 0.0, state.volume).item()
+    final_pressure = get_pressure(final_stress, 0.0, state.volume)
     print(
         f"Final energy: {[f'{e:.4f}' for e in final_energy]} eV, "
-        f"Final pressure: {[f'{p.item():.4f}' for p in final_pressure]} eV/A^3"
+        f"Final pressure: {[f'{p:.4f}' for p in final_pressure]} eV/A^3"
     )
     return state, logger, final_energy, final_pressure
 
@@ -881,8 +881,8 @@ def get_relaxed_structure(
     logger = {"energy": torch.zeros((max_iter, 1), device=device, dtype=dtype)}
 
     results = model(state)
-    Initial_energy = results["energy"]
-    print(f"Initial energy: {Initial_energy.item():.4f} eV")
+    init_energy = [e.item() for e in results["energy"]]
+    print(f"Initial energy: {[f'{e:.4f}' for e in init_energy]} eV")
 
     state_init_fn, fire_update = fire(model=model)
     state = state_init_fn(state)
@@ -901,11 +901,11 @@ def get_relaxed_structure(
         positions=state.positions, cell=state.cell, atomic_numbers=state.atomic_numbers
     )
 
-    final_energy = final_results["energy"].item()
+    final_energy = [e.item() for e in final_results["energy"]]
     final_stress = final_results["stress"]
-    final_pressure = get_pressure(final_stress, 0.0, state.volume).item()
+    final_pressure = get_pressure(final_stress, 0.0, state.volume)
     print(
-        f"Final energy: {final_energy:.4f} eV, "
-        f"Final pressure: {final_pressure:.4f} eV/A^3"
+        f"Final energy: {[f'{e:.4f}' for e in final_energy]} eV, "
+        f"Final pressure: {[f'{p:.4f}' for p in final_pressure]} eV/A^3"
     )
     return state, logger, final_energy, final_pressure
