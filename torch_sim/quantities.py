@@ -146,7 +146,7 @@ def calc_heat_flux(
     masses: torch.Tensor,
     velocities: torch.Tensor | None,
     energies: torch.Tensor,
-    stress: torch.Tensor,
+    stresses: torch.Tensor,
     batch: torch.Tensor | None = None,
     *,  # Force keyword arguments for booleans
     is_centroid_stress: bool = False,
@@ -176,7 +176,7 @@ def calc_heat_flux(
         masses: Particle masses, shape (n_particles,)
         velocities: Particle velocities, shape (n_particles, n_dim)
         energies: Per-atom energies (p.e. + k.e.), shape (n_particles,)
-        stress: Per-atom stress tensor components:
+        stresses: Per-atom stress tensor components:
             - If is_centroid_stress=False: shape (n_particles, 6) for
               :math:`[\sigma_{xx}, \sigma_{yy}, \sigma_{zz},
               \sigma_{xy}, \sigma_{xz}, \sigma_{yz}]`
@@ -208,36 +208,36 @@ def calc_heat_flux(
     if is_centroid_stress:
         # Centroid formulation: r_i[x,y,z] . f_i[x,y,z]
         virial_x = -(
-            stress[:, 0] * velocities[:, 0]  # r_ix.f_ix.v_x
-            + stress[:, 3] * velocities[:, 1]  # r_ix.f_iy.v_y
-            + stress[:, 4] * velocities[:, 2]  # r_ix.f_iz.v_z
+            stresses[:, 0] * velocities[:, 0]  # r_ix.f_ix.v_x
+            + stresses[:, 3] * velocities[:, 1]  # r_ix.f_iy.v_y
+            + stresses[:, 4] * velocities[:, 2]  # r_ix.f_iz.v_z
         )
         virial_y = -(
-            stress[:, 6] * velocities[:, 0]  # r_iy.f_ix.v_x
-            + stress[:, 1] * velocities[:, 1]  # r_iy.f_iy.v_y
-            + stress[:, 5] * velocities[:, 2]  # r_iy.f_iz.v_z
+            stresses[:, 6] * velocities[:, 0]  # r_iy.f_ix.v_x
+            + stresses[:, 1] * velocities[:, 1]  # r_iy.f_iy.v_y
+            + stresses[:, 5] * velocities[:, 2]  # r_iy.f_iz.v_z
         )
         virial_z = -(
-            stress[:, 7] * velocities[:, 0]  # r_iz.f_ix.v_x
-            + stress[:, 8] * velocities[:, 1]  # r_iz.f_iy.v_y
-            + stress[:, 2] * velocities[:, 2]  # r_iz.f_iz.v_z
+            stresses[:, 7] * velocities[:, 0]  # r_iz.f_ix.v_x
+            + stresses[:, 8] * velocities[:, 1]  # r_iz.f_iy.v_y
+            + stresses[:, 2] * velocities[:, 2]  # r_iz.f_iz.v_z
         )
     else:
         # Standard stress tensor components
         virial_x = -(
-            stress[:, 0] * velocities[:, 0]  # s_xx.v_x
-            + stress[:, 3] * velocities[:, 1]  # s_xy.v_y
-            + stress[:, 4] * velocities[:, 2]  # s_xz.v_z
+            stresses[:, 0] * velocities[:, 0]  # s_xx.v_x
+            + stresses[:, 3] * velocities[:, 1]  # s_xy.v_y
+            + stresses[:, 4] * velocities[:, 2]  # s_xz.v_z
         )
         virial_y = -(
-            stress[:, 3] * velocities[:, 0]  # s_xy.v_x
-            + stress[:, 1] * velocities[:, 1]  # s_yy.v_y
-            + stress[:, 5] * velocities[:, 2]  # s_yz.v_z
+            stresses[:, 3] * velocities[:, 0]  # s_xy.v_x
+            + stresses[:, 1] * velocities[:, 1]  # s_yy.v_y
+            + stresses[:, 5] * velocities[:, 2]  # s_yz.v_z
         )
         virial_z = -(
-            stress[:, 4] * velocities[:, 0]  # s_xz.v_x
-            + stress[:, 5] * velocities[:, 1]  # s_yz.v_y
-            + stress[:, 2] * velocities[:, 2]  # s_zz.v_z
+            stresses[:, 4] * velocities[:, 0]  # s_xz.v_x
+            + stresses[:, 5] * velocities[:, 1]  # s_yz.v_y
+            + stresses[:, 2] * velocities[:, 2]  # s_zz.v_z
         )
 
     virial_flux = torch.stack([virial_x, virial_y, virial_z], dim=-1)
