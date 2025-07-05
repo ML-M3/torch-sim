@@ -46,7 +46,7 @@ class TestHeatFlux:
             masses=mock_simple_system["masses"],
             velocities=mock_simple_system["velocities"],
             energies=mock_simple_system["energies"],
-            stress=mock_simple_system["stress"],
+            stresses=mock_simple_system["stress"],
             is_virial_only=False,
         )
 
@@ -63,7 +63,7 @@ class TestHeatFlux:
             masses=mock_simple_system["masses"],
             velocities=mock_simple_system["velocities"],
             energies=mock_simple_system["energies"],
-            stress=mock_simple_system["stress"],
+            stresses=mock_simple_system["stress"],
             is_virial_only=True,
         )
 
@@ -96,7 +96,7 @@ class TestHeatFlux:
             masses=torch.ones(3, device=device),
             velocities=velocities,
             energies=energies,
-            stress=stress,
+            stresses=stress,
             batch=batch,
         )
 
@@ -119,7 +119,7 @@ class TestHeatFlux:
             masses=torch.ones(1, device=device),
             velocities=velocities,
             energies=energies,
-            stress=stress,
+            stresses=stress,
             is_centroid_stress=True,
         )
 
@@ -139,7 +139,7 @@ class TestHeatFlux:
             masses=masses,
             velocities=None,
             energies=energies,
-            stress=stress,
+            stresses=stress,
         )
 
         # Heat flux terms should cancel out
