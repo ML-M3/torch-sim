@@ -24,6 +24,8 @@ from typing import Any
 
 import torch
 
+from torch_sim.elastic import full_3x3_to_voigt_6_stress
+from torch_sim.quantities import calc_heat_flux
 from torch_sim.state import SimState
 
 
@@ -472,4 +474,110 @@ class VelocityAutoCorrelation:
     @property
     def vacf(self) -> torch.Tensor | None:
         """Current VACF result."""
+        return self._avg
+
+
+class HeatFluxAutoCorrelation:
+    """Calculator for heat flux autocorrelation function (HFACF).
+
+    Computes HFACF by averaging over atoms and dimensions, with optional
+    running average across correlation windows.
+
+
+    Using ``HeatFluxAutoCorrelation`` with
+    :class:`~torch_sim.trajectory.TrajectoryReporter`::
+
+        # Create HFACF calculator
+        hfacf_calc = HeatFluxAutoCorrelation(
+            window_size=100,
+            device=device,
+            use_running_average=True,
+            model=model,
+        )
+
+        # Set up trajectory reporter
+        reporter = TrajectoryReporter(
+            "simulation_hfacf.h5",
+            state_frequency=100,
+            prop_calculators={10: {"hfacf": hfacf_calc}},
+        )
+
+    """
+
+    def __init__(
+        self,
+        *,
+        model: torch.nn.Module,
+        window_size: int,
+        device: torch.device,
+        use_running_average: bool = True,
+        normalize: bool = True,
+    ) -> None:
+        """Initialize HFACF calculator.
+
+        Args:
+            window_size: Number of steps in correlation window
+            device: Computation device
+            use_running_average: Whether to compute running average across windows
+            normalize: Whether to normalize correlation functions to [0,1]
+            model: Model to use for calculating heat flux
+        """
+        # TODO (AG): Figure out how to do it in a more efficient way
+        self.model = model
+        self.model.per_atom_stresses = True
+        self.model.per_atom_energies = True
+
+        self.corr_calc = CorrelationCalculator(
+            window_size=window_size,
+            properties={
+                "heat_flux": lambda s: calc_heat_flux(
+                    momenta=s.momenta,
+                    masses=s.masses,
+                    velocities=None,
+                    energies=self.model(s)["energies"],
+                    stresses=full_3x3_to_voigt_6_stress(self.model(s)["stresses"]),
+                    batch=s.batch,
+                    is_centroid_stress=False,
+                    is_virial_only=False,
+                )
+            },
+            device=device,
+            normalize=normalize,
+        )
+        self.use_running_average = use_running_average
+        self._window_count = 0
+        self._avg = torch.zeros(window_size, device=device)
+
+    def __call__(self, state: SimState, _: Any = None) -> torch.Tensor:
+        """Update HFACF with new state.
+
+        Args:
+            state: Current simulation state
+            _: Unused model argument (required property calculator interface)
+
+        Returns:
+            Tensor containing average HFACF
+        """
+        self.corr_calc.update(state)
+
+        if self.corr_calc.buffers["heat_flux"].count == self.corr_calc.window_size:
+            correlations = self.corr_calc.get_auto_correlations()
+            # dims: (ndims, 1)
+            hfacf = torch.mean(correlations["heat_flux"], dim=(1, 2))
+
+            self._window_count += 1
+
+            if self.use_running_average:
+                factor = 1.0 / self._window_count
+                self._avg += (hfacf - self._avg) * factor
+            else:
+                self._avg = hfacf
+
+            self.corr_calc.reset()
+
+        return torch.tensor([self._window_count], device=state.device)
+
+    @property
+    def hfacf(self) -> torch.Tensor | None:
+        """Current HFACF result."""
         return self._avg
