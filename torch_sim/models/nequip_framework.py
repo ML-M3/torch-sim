@@ -9,6 +9,9 @@ The implementation supports various features including:
 
 * Computing energies, forces, and stresses
 * Batched calculations for multiple systems
+
+References:
+    - NequIP Package: https://github.com/mir-group/nequip
 """
 
 import traceback
@@ -118,6 +121,10 @@ def from_compiled_model(
         >>> model, (r_max, type_names) = from_compiled_model("model.pth", device="cuda")
         >>> print(f"Model cutoff: {r_max:.2f}")
         >>> print(f"Supported elements: {type_names}")
+
+    References:
+        For model compilation please refer to the NequIP documentation:
+            https://nequip.readthedocs.io/en/latest/guide/getting-started/workflow.html#compilation
     """
     model, metadata = load_compiled_model(
         compile_path, device, PAIR_NEQUIP_INPUTS, ASE_OUTPUTS
