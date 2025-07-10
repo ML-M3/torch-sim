@@ -149,8 +149,6 @@ class NequIPFrameworkModel(torch.nn.Module, ModelInterface):
         type_names (list[str]): List of chemical symbols supported by the model.
         device (torch.device | None): Device to run calculations on.
             Defaults to CUDA if available, otherwise CPU.
-        dtype (torch.dtype): Data type for calculations.
-            Defaults to torch.float64.
         neighbor_list_fn (Callable): Function to compute neighbor lists.
             Defaults to vesin_nl_ts.
         atomic_numbers (torch.Tensor | None): Atomic numbers with shape [n_atoms].
@@ -167,7 +165,6 @@ class NequIPFrameworkModel(torch.nn.Module, ModelInterface):
         r_max: float,
         type_names: list[str],
         device: torch.device | None = None,
-        dtype: torch.dtype = torch.float64,
         neighbor_list_fn: Callable = vesin_nl_ts,
         atomic_numbers: torch.Tensor | None = None,
         batch: torch.Tensor | None = None,
@@ -180,7 +177,6 @@ class NequIPFrameworkModel(torch.nn.Module, ModelInterface):
             type_names: List of chemical symbols supported by the model.
             device: Device to run calculations on.
                 Defaults to CUDA if available, otherwise CPU.
-            dtype: Data type for calculations. Defaults to torch.float64.
             neighbor_list_fn: Function to compute neighbor lists. Defaults to vesin_nl_ts.
             atomic_numbers: Atomic numbers with shape [n_atoms]. If provided at
                 initialization, cannot be provided again during forward pass.
@@ -196,7 +192,6 @@ class NequIPFrameworkModel(torch.nn.Module, ModelInterface):
         self._device = device or torch.device(
             "cuda" if torch.cuda.is_available() else "cpu"
         )
-        self._dtype = dtype
         self.neighbor_list_fn = neighbor_list_fn
         self._memory_scales_with = "n_atoms_x_density"
         self._compute_forces = True
@@ -208,7 +203,8 @@ class NequIPFrameworkModel(torch.nn.Module, ModelInterface):
             raise TypeError("Invalid model type. Must be a torch.nn.Module.")
 
         # Set model properties
-        self.r_max = torch.tensor(r_max, dtype=self.dtype, device=self.device)
+        # using float64 for the cutoff radius (neighbor list)
+        self.r_max = torch.tensor(r_max, dtype=torch.float64, device=self.device)
         self.type_names = type_names
 
         # Store flag to track if atomic numbers were provided at init
