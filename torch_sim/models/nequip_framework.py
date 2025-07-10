@@ -27,7 +27,6 @@ from torch_sim.typing import StateDict
 
 
 try:
-    from nequip.data.transforms import ChemicalSpeciesToAtomTypeMapper
     from nequip.model.inference_models import load_compiled_model
     from nequip.nn import graph_model
     from nequip.scripts._compile_utils import ASE_OUTPUTS, PAIR_NEQUIP_INPUTS
