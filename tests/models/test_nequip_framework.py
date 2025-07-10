@@ -11,7 +11,10 @@ from tests.models.conftest import make_model_calculator_consistency_test
 try:
     from nequip.ase import NequIPCalculator
 
-    from torch_sim.models.nequip_framework import NequIPModel, from_compiled_model
+    from torch_sim.models.nequip_framework import (
+        NequIPFrameworkModel,
+        from_compiled_model,
+    )
 except ImportError:
     pytest.skip("nequip not installed", allow_module_level=True)
 
@@ -41,12 +44,12 @@ def model_path_nequip(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture
-def nequip_model(model_path_nequip: Path, device: torch.device) -> NequIPModel:
+def nequip_model(model_path_nequip: Path, device: torch.device) -> NequIPFrameworkModel:
     """Create an NequIPModel wrapper for the pretrained model."""
     compiled_model, (r_max, type_names) = from_compiled_model(
         model_path_nequip, device=device
     )
-    return NequIPModel(
+    return NequIPFrameworkModel(
         model=compiled_model,
         r_max=r_max,
         type_names=type_names,
@@ -65,7 +68,7 @@ def test_nequip_initialization(model_path_nequip: Path, device: torch.device) ->
     compiled_model, (r_max, type_names) = from_compiled_model(
         model_path_nequip, device=device
     )
-    model = NequIPModel(
+    model = NequIPFrameworkModel(
         model=compiled_model,
         r_max=r_max,
         type_names=type_names,

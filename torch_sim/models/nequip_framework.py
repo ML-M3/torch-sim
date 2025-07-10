@@ -33,7 +33,7 @@ try:
 except ImportError as exc:
     warnings.warn(f"NequIP import failed: {traceback.format_exc()}", stacklevel=2)
 
-    class NequIPModel(torch.nn.Module, ModelInterface):
+    class NequIPFrameworkModel(torch.nn.Module, ModelInterface):
         """NequIP model wrapper for torch_sim.
 
         This class is a placeholder for the NequIPModel class.
@@ -130,7 +130,7 @@ def from_compiled_model(
     return model, (r_max, type_names)
 
 
-class NequIPModel(torch.nn.Module, ModelInterface):
+class NequIPFrameworkModel(torch.nn.Module, ModelInterface):
     """NequIP model for energy, force and stress calculations.
 
     This class wraps a NequIP model to compute energies, forces and stresses
