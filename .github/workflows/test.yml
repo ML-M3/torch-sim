@@ -51,6 +51,7 @@ jobs:
             --ignore=tests/models/test_mattersim.py \
             --ignore=tests/models/test_metatomic.py \
             --ignore=tests/test_optimizers_vs_ase.py \
+            --ignore=tests/models/test_nequip_framework.py
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -76,6 +77,7 @@ jobs:
           - { name: metatomic, test_path: "tests/models/test_metatomic.py" }
           - { name: orb, test_path: "tests/models/test_orb.py" }
           - { name: sevenn, test_path: "tests/models/test_sevennet.py" }
+          - { name: nequip, test_path: "tests/models/test_nequip_framework.py" }
     runs-on: ${{ matrix.os }}
 
     steps:
