@@ -343,6 +343,7 @@ class NequIPFrameworkModel(torch.nn.Module, ModelInterface):
             "pos": state.positions,
             "cell": state.row_vector_cell,
             "batch": state.batch,
+            "num_atoms": state.batch.bincount(),
             "pbc": torch.tensor(
                 [state.pbc, state.pbc, state.pbc], dtype=torch.bool, device=self.device
             ),
