@@ -81,7 +81,7 @@ test_nequip_consistency = make_model_calculator_consistency_test(
     test_name="nequip",
     model_fixture_name="nequip_model",
     calculator_fixture_name="nequip_calculator",
-    sim_state_names=("si_sim_state",),
+    sim_state_names=("si_sim_state", "rattled_si_sim_state"),
 )
 
-# TODO (AG): Test multi element models and batching
+# TODO (AG): Test multi element models
