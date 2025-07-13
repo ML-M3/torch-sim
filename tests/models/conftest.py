@@ -23,6 +23,7 @@ consistency_test_simstate_fixtures: Final[tuple[str, ...]] = (
     "niti_sim_state",
     "ti_sim_state",
     "si_sim_state",
+    "rattled_si_sim_state",
     "sio2_sim_state",
     "rattled_sio2_sim_state",
     "ar_supercell_sim_state",
