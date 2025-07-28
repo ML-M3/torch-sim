@@ -257,6 +257,32 @@ def rattled_sio2_sim_state(
 
 
 @pytest.fixture
+def rattled_si_sim_state(
+    si_sim_state: ts.SimState,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> ts.SimState:
+    """Create a rattled Si system for testing."""
+    sim_state = si_sim_state.clone()
+
+    # Store the current RNG state
+    rng_state = torch.random.get_rng_state()
+    try:
+        # Temporarily set a fixed seed
+        torch.manual_seed(3)
+        weibull = torch.distributions.weibull.Weibull(scale=0.1, concentration=1)
+        rnd = torch.randn_like(sim_state.positions, device=device, dtype=dtype)
+        rnd = rnd / torch.norm(rnd, dim=-1, keepdim=True).to(device=device)
+        shifts = weibull.sample(rnd.shape).to(device=device) * rnd
+        sim_state.positions = sim_state.positions + shifts
+    finally:
+        # Restore the original RNG state
+        torch.random.set_rng_state(rng_state)
+
+    return sim_state
+
+
+@pytest.fixture
 def casio3_sim_state(device: torch.device, dtype: torch.dtype) -> ts.SimState:
     a, b, c = 7.9258, 7.3202, 7.0653
     alpha, beta, gamma = 90.055, 95.217, 103.426
