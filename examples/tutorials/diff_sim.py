@@ -1,7 +1,12 @@
 # %% [markdown]
-"""
-## Imports
-"""
+# <details>
+#   <summary>Dependencies</summary>
+# /// script
+# dependencies = [
+#     "matplotlib",
+# ]
+# ///
+# </details>
 
 # %%
 import torch
